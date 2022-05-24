@@ -20,30 +20,30 @@ func NewInMemoryStorage() Storage {
 	return storage
 }
 
-func (db *InMemoryStorage) Select(id uint32) (string, error) {
-	db.guard.RLock()
-	defer db.guard.RUnlock()
+func (storage *InMemoryStorage) Select(id uint32) (string, error) {
+	storage.guard.RLock()
+	defer storage.guard.RUnlock()
 
-	value, ok := db.id2value[id]
+	value, ok := storage.id2value[id]
 	if ok {
 		return value, nil
 	}
 	return "", fmt.Errorf("id '%d' not found", id)
 }
 
-func (db *InMemoryStorage) Insert(value string) (uint32, error) {
-	db.guard.Lock()
-	defer db.guard.Unlock()
+func (storage *InMemoryStorage) Insert(value string) (uint32, error) {
+	storage.guard.Lock()
+	defer storage.guard.Unlock()
 
-	id, ok := db.value2id[value]
+	id, ok := storage.value2id[value]
 	if ok {
 		return id, nil
 	}
 
-	id = db.currentID
-	db.id2value[id] = value
-	db.value2id[value] = id
-	db.currentID++
+	id = storage.currentID
+	storage.id2value[id] = value
+	storage.value2id[value] = id
+	storage.currentID++
 
 	return id, nil
 }
