@@ -16,7 +16,7 @@ cmd/shortener/main
 cmd/shortener/shortener
 
 # Dependency directories (remove the comment below to include it)
-#vendor/
+vendor/
 
 # IDEs directories
 .idea

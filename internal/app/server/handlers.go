@@ -10,18 +10,16 @@ import (
 	"strings"
 )
 
-func route(addLongLink http.HandlerFunc, getShortLink http.HandlerFunc) http.HandlerFunc {
+type httpMethod string
+type routingTable map[httpMethod]http.HandlerFunc
+
+func route(routingTable routingTable) http.HandlerFunc {
 	return func(responseWriter http.ResponseWriter, request *http.Request) {
-		if request.Method == http.MethodPost {
-			addLongLink(responseWriter, request)
+		handler, ok := routingTable[httpMethod(request.Method)]
+		if ok {
+			handler(responseWriter, request)
 			return
 		}
-
-		if request.Method == http.MethodGet {
-			getShortLink(responseWriter, request)
-			return
-		}
-
 		http.Error(responseWriter, "Method not allowed", http.StatusBadRequest)
 	}
 }

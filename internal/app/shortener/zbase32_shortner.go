@@ -9,12 +9,12 @@ import (
 )
 
 type ZBase32Shortener struct {
-	db storage.Storage
+	storage storage.Storage
 }
 
-func NewZBase32Shortener() ZBase32Shortener {
+func NewZBase32Shortener(storage storage.Storage) ZBase32Shortener {
 	return ZBase32Shortener{
-		db: storage.NewInMemoryStorage(),
+		storage: storage,
 	}
 }
 
@@ -25,7 +25,7 @@ func (shortener *ZBase32Shortener) Encode(longURL string) (string, error) {
 	}
 	longURL = url.String()
 
-	id, err := shortener.db.Insert(longURL)
+	id, err := shortener.storage.Insert(longURL)
 	if err != nil {
 		return "", err
 	}
@@ -46,5 +46,5 @@ func (shortener *ZBase32Shortener) Decode(shortURL string) (string, error) {
 	}
 
 	id := binary.LittleEndian.Uint32(bytes)
-	return shortener.db.Select(id)
+	return shortener.storage.Select(id)
 }

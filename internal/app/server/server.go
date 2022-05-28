@@ -21,9 +21,12 @@ func (server *Server) ListenAndServe(port uint16) {
 		Scheme: "http",
 		Host:   fmt.Sprintf("localhost:%v", port),
 	}
-	http.HandleFunc(
-		"/",
-		route(addLongLink(server.shortener, baseURL), getShortLink(server.shortener)),
-	)
+
+	routingTable := routingTable{
+		http.MethodGet:  getShortLink(server.shortener),
+		http.MethodPost: addLongLink(server.shortener, baseURL),
+	}
+
+	http.HandleFunc("/", route(routingTable))
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
 }
