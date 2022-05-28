@@ -2,6 +2,7 @@ module github.com/ikashurnikov/shortener
 
 require (
 	github.com/corvus-ch/zbase32 v1.0.0
+	github.com/go-chi/chi/v5 v5.0.7
 	github.com/stretchr/testify v1.7.1
 )
 

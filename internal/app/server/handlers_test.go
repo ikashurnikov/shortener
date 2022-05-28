@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"io"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -32,7 +32,26 @@ func (shortener *mockShortener) Decode(shortURL string) (string, error) {
 	return fmt.Sprintf("http://%v", shortURL), nil
 }
 
-func Test_addLongLink(t *testing.T) {
+type request struct {
+	method string
+	path   string
+	body   string
+}
+
+func testRequest(t *testing.T, ts *httptest.Server, r request) (*http.Response, string) {
+	req, err := http.NewRequest(r.method, ts.URL+r.path, bytes.NewReader([]byte(r.body)))
+	require.NoError(t, err)
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+
+	respBody, err := ioutil.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	return resp, string(respBody)
+}
+
+func Test_postLongLink(t *testing.T) {
 	type want struct {
 		response   string
 		statusCode int
@@ -51,7 +70,7 @@ func Test_addLongLink(t *testing.T) {
 			shortenerError: false,
 			want: want{
 				statusCode: http.StatusCreated,
-				response:   "http://localhost/yandex.ru",
+				response:   "http://localhost:8080/yandex.ru",
 			},
 		},
 		{
@@ -74,27 +93,29 @@ func Test_addLongLink(t *testing.T) {
 			},
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			shortener := &mockShortener{error: tt.shortenerError}
-			request := httptest.NewRequest(http.MethodPost, tt.target, bytes.NewReader([]byte(tt.body)))
-
-			w := httptest.NewRecorder()
-			h := http.HandlerFunc(addLongLink(shortener, url.URL{
+			baseURL := url.URL{
 				Scheme: "http",
-				Host:   "localhost",
-			}))
-			h.ServeHTTP(w, request)
+				Host:   "localhost:8080",
+			}
 
-			res := w.Result()
+			handler := NewHandler(shortener, baseURL)
+			testServer := httptest.NewServer(handler)
+			defer testServer.Close()
 
-			defer res.Body.Close()
-			resBody, err := io.ReadAll(res.Body)
-			require.NoError(t, err)
+			resp, respBody := testRequest(t, testServer, request{
+				method: "POST",
+				path:   tt.target,
+				body:   tt.body,
+			})
+			defer resp.Body.Close()
 
-			assert.Equal(t, tt.want.statusCode, res.StatusCode)
-			if res.StatusCode == http.StatusCreated {
-				assert.Equal(t, tt.want.response, string(resBody))
+			assert.Equal(t, tt.want.statusCode, resp.StatusCode)
+			if resp.StatusCode == http.StatusCreated {
+				assert.Equal(t, tt.want.response, string(respBody))
 			}
 		})
 	}
@@ -142,72 +163,126 @@ func Test_getShortLink(t *testing.T) {
 			},
 		},
 	}
+
+	http.DefaultClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			shortener := &mockShortener{error: tt.shortenerError}
-			request := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			baseURL := url.URL{
+				Scheme: "http",
+				Host:   "localhost:8080",
+			}
 
-			w := httptest.NewRecorder()
-			h := http.HandlerFunc(getShortLink(shortener))
-			h.ServeHTTP(w, request)
+			handler := NewHandler(shortener, baseURL)
+			testServer := httptest.NewServer(handler)
+			defer testServer.Close()
 
-			res := w.Result()
-			defer res.Body.Close()
+			resp, _ := testRequest(t, testServer, request{
+				method: "GET",
+				path:   tt.path,
+			})
+			defer resp.Body.Close()
 
-			assert.Equal(t, tt.want.statusCode, res.StatusCode)
-			assert.Equal(t, tt.want.location, res.Header.Get("Location"))
+			assert.Equal(t, tt.want.statusCode, resp.StatusCode)
+			assert.Equal(t, tt.want.location, resp.Header.Get("Location"))
 		})
 	}
 }
 
 func Test_route(t *testing.T) {
 	tests := []struct {
-		name           string
 		method         string
+		path           string
+		body           string
 		wantStatusCode int
 	}{
 		{
-			name:           "POST",
-			method:         http.MethodPost,
-			wantStatusCode: http.StatusOK,
+			method:         "POST",
+			path:           "/",
+			body:           "http://yandex.ru",
+			wantStatusCode: http.StatusCreated,
 		},
 		{
-			name:           "GET",
-			method:         http.MethodGet,
-			wantStatusCode: http.StatusOK,
-		},
-
-		{
-			name:           "DELETE",
-			method:         http.MethodDelete,
+			method:         "POST",
+			path:           "/test",
+			body:           "http://yandex.ru",
 			wantStatusCode: http.StatusBadRequest,
 		},
-
 		{
-			name:           "HEAD",
-			method:         http.MethodHead,
+			method:         "GET",
+			path:           "/xxx",
+			wantStatusCode: http.StatusTemporaryRedirect,
+		},
+		{
+			method:         "GET",
+			path:           "/",
+			wantStatusCode: http.StatusBadRequest,
+		},
+		{
+			method:         "PUT",
+			path:           "/",
+			body:           "http://yandex.ru",
+			wantStatusCode: http.StatusBadRequest,
+		},
+		{
+			method:         "PATCH",
+			path:           "/",
+			body:           "http://yandex.ru",
+			wantStatusCode: http.StatusBadRequest,
+		},
+		{
+			method:         "DELETE",
+			body:           "http://yandex.ru",
+			wantStatusCode: http.StatusBadRequest,
+		},
+		{
+			method:         "CONNECT",
+			path:           "/",
+			body:           "http://yandex.ru",
+			wantStatusCode: http.StatusBadRequest,
+		},
+		{
+			method:         "OPTIONS",
+			path:           "/",
+			body:           "http://yandex.ru",
+			wantStatusCode: http.StatusBadRequest,
+		},
+		{
+			method:         "TRACE",
+			path:           "/",
+			body:           "http://yandex.ru",
 			wantStatusCode: http.StatusBadRequest,
 		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			request := httptest.NewRequest(tt.method, "/", nil)
 
-			handler := func(responseWriter http.ResponseWriter, request *http.Request) {
-				responseWriter.WriteHeader(http.StatusOK)
+	http.DefaultClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+
+	for _, tt := range tests {
+		name := fmt.Sprintf("%s %s", tt.method, tt.path)
+		t.Run(name, func(t *testing.T) {
+			shortener := &mockShortener{}
+			baseURL := url.URL{
+				Scheme: "http",
+				Host:   "localhost:8080",
 			}
 
-			w := httptest.NewRecorder()
-			h := http.HandlerFunc(route(routingTable{
-				"GET":  handler,
-				"POST": handler,
-			}))
-			h.ServeHTTP(w, request)
+			handler := NewHandler(shortener, baseURL)
+			testServer := httptest.NewServer(handler)
+			defer testServer.Close()
 
-			res := w.Result()
-			defer res.Body.Close()
+			resp, _ := testRequest(t, testServer, request{
+				method: tt.method,
+				path:   tt.path,
+				body:   tt.body,
+			})
+			defer resp.Body.Close()
 
-			assert.Equal(t, tt.wantStatusCode, res.StatusCode)
+			assert.Equal(t, tt.wantStatusCode, resp.StatusCode)
 		})
 	}
 }

@@ -2,31 +2,31 @@ package server
 
 import (
 	"fmt"
-	"github.com/ikashurnikov/shortener/internal/app/shortener"
 	"log"
 	"net/http"
 	"net/url"
+
+	"github.com/ikashurnikov/shortener/internal/app/shortener"
 )
 
 type Server struct {
 	shortener shortener.Shortener
+	http.Server
 }
 
-func NewServer(shortener shortener.Shortener) Server {
-	return Server{shortener: shortener}
+func NewServer(shortener shortener.Shortener) *Server {
+	return &Server{
+		shortener: shortener,
+	}
 }
 
-func (server *Server) ListenAndServe(port uint16) {
+func (server *Server) Run(host string, port uint16) {
 	baseURL := url.URL{
 		Scheme: "http",
-		Host:   fmt.Sprintf("localhost:%v", port),
+		Host:   fmt.Sprintf("%v:%v", host, port),
 	}
 
-	routingTable := routingTable{
-		http.MethodGet:  getShortLink(server.shortener),
-		http.MethodPost: addLongLink(server.shortener, baseURL),
-	}
-
-	http.HandleFunc("/", route(routingTable))
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
+	server.Addr = fmt.Sprintf(":%d", port)
+	server.Handler = NewHandler(server.shortener, baseURL)
+	log.Fatal(server.ListenAndServe())
 }

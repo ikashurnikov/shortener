@@ -10,5 +10,5 @@ func main() {
 	storage := storage.NewInMemoryStorage()
 	shortener := shortener.NewZBase32Shortener(storage)
 	srv := server.NewServer(&shortener)
-	srv.ListenAndServe(8080)
+	srv.Run("localhost", 8080)
 }

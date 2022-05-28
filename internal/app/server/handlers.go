@@ -2,52 +2,69 @@ package server
 
 import (
 	"fmt"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/ikashurnikov/shortener/internal/app/shortener"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
-	"strings"
+
+	"github.com/go-chi/chi/v5"
 )
 
-type httpMethod string
-type routingTable map[httpMethod]http.HandlerFunc
-
-func route(routingTable routingTable) http.HandlerFunc {
-	return func(responseWriter http.ResponseWriter, request *http.Request) {
-		handler, ok := routingTable[httpMethod(request.Method)]
-		if ok {
-			handler(responseWriter, request)
-			return
-		}
-		http.Error(responseWriter, "Method not allowed", http.StatusBadRequest)
-	}
+type Handler struct {
+	*chi.Mux
+	shortener shortener.Shortener
+	baseURL   url.URL
 }
 
-func addLongLink(shortener shortener.Shortener, baseURL url.URL) http.HandlerFunc {
-	return func(responseWriter http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/" {
-			http.Error(responseWriter, "Bad request", http.StatusBadRequest)
-			return
-		}
+func NewHandler(shortener shortener.Shortener, baseURL url.URL) *Handler {
+	badRequest := func(writer http.ResponseWriter, request *http.Request) {
+		writer.WriteHeader(http.StatusBadRequest)
+	}
 
+	router := chi.NewRouter()
+	router.Use(middleware.CleanPath)
+	router.Use(middleware.RequestID)
+	router.Use(middleware.RealIP)
+	router.Use(middleware.Recoverer)
+	router.Use(middleware.Logger)
+	router.NotFound(badRequest)
+	router.MethodNotAllowed(badRequest)
+
+	handler := &Handler{
+		Mux:       router,
+		shortener: shortener,
+		baseURL:   baseURL,
+	}
+	handler.Route("/", func(router chi.Router) {
+		router.Post("/", handler.postLongLink())
+		router.Get("/{shortURL}", handler.getShortLink())
+	})
+	return handler
+}
+
+func (handler *Handler) postLongLink() http.HandlerFunc {
+	return func(responseWriter http.ResponseWriter, request *http.Request) {
 		bodyBytes, err := io.ReadAll(request.Body)
 		if err != nil {
 			return
 		}
 
-		longURL := string(bodyBytes)
-		log.Printf("POST: Reviced url %s", longURL)
+		longURL, err := url.ParseRequestURI(string(bodyBytes))
+		if err != nil {
+			http.Error(responseWriter, err.Error(), http.StatusBadRequest)
+			return
+		}
 
-		path, err := shortener.Encode(longURL)
+		path, err := handler.shortener.Encode(longURL.String())
 		if err != nil {
 			http.Error(responseWriter, err.Error(), http.StatusBadRequest)
 			return
 		}
 
 		shortURL := url.URL{
-			Scheme: baseURL.Scheme,
-			Host:   baseURL.Host,
+			Scheme: handler.baseURL.Scheme,
+			Host:   handler.baseURL.Host,
 			Path:   path,
 		}
 
@@ -56,17 +73,11 @@ func addLongLink(shortener shortener.Shortener, baseURL url.URL) http.HandlerFun
 	}
 }
 
-func getShortLink(shortener shortener.Shortener) http.HandlerFunc {
+func (handler *Handler) getShortLink() http.HandlerFunc {
 	return func(responseWriter http.ResponseWriter, request *http.Request) {
-		shortURL := strings.Trim(request.URL.Path, "/")
-		if shortURL == "" {
-			http.Error(responseWriter, "Empty URL", http.StatusBadRequest)
-			return
-		}
+		shortURL := chi.URLParam(request, "shortURL")
 
-		log.Printf("Get: Reviced url %s", shortURL)
-
-		longURL, err := shortener.Decode(shortURL)
+		longURL, err := handler.shortener.Decode(shortURL)
 		if err != nil {
 			http.Error(
 				responseWriter,
