@@ -1,4 +1,4 @@
-package server
+package handler
 
 import (
 	"bytes"
@@ -18,14 +18,14 @@ type mockShortener struct {
 	error bool
 }
 
-func (shortener *mockShortener) Encode(longURL string) (string, error) {
+func (shortener *mockShortener) EncodeLongURL(longURL string) (string, error) {
 	if shortener.error {
 		return "", errors.New("ERROR")
 	}
 	return strings.TrimPrefix(longURL, "http://"), nil
 }
 
-func (shortener *mockShortener) Decode(shortURL string) (string, error) {
+func (shortener *mockShortener) DecodeShortURL(shortURL string) (string, error) {
 	if shortener.error {
 		return "", errors.New("ERROR")
 	}
@@ -79,12 +79,12 @@ func Test_postLongLink(t *testing.T) {
 			body:           "http://yandex.ru",
 			shortenerError: false,
 			want: want{
-				statusCode: http.StatusBadRequest,
+				statusCode: http.StatusMethodNotAllowed,
 			},
 		},
 
 		{
-			name:           "shortener failed",
+			name:           "url_shortener failed",
 			target:         "/",
 			body:           "http://yandex.ru",
 			shortenerError: true,
@@ -138,7 +138,7 @@ func Test_getShortLink(t *testing.T) {
 			path:           "/",
 			shortenerError: false,
 			want: want{
-				statusCode: http.StatusBadRequest,
+				statusCode: http.StatusMethodNotAllowed,
 				location:   "",
 			},
 		},
@@ -209,7 +209,7 @@ func Test_route(t *testing.T) {
 			method:         "POST",
 			path:           "/test",
 			body:           "http://yandex.ru",
-			wantStatusCode: http.StatusBadRequest,
+			wantStatusCode: http.StatusMethodNotAllowed,
 		},
 		{
 			method:         "GET",
@@ -219,42 +219,42 @@ func Test_route(t *testing.T) {
 		{
 			method:         "GET",
 			path:           "/",
-			wantStatusCode: http.StatusBadRequest,
+			wantStatusCode: http.StatusMethodNotAllowed,
 		},
 		{
 			method:         "PUT",
 			path:           "/",
 			body:           "http://yandex.ru",
-			wantStatusCode: http.StatusBadRequest,
+			wantStatusCode: http.StatusMethodNotAllowed,
 		},
 		{
 			method:         "PATCH",
 			path:           "/",
 			body:           "http://yandex.ru",
-			wantStatusCode: http.StatusBadRequest,
+			wantStatusCode: http.StatusMethodNotAllowed,
 		},
 		{
 			method:         "DELETE",
 			body:           "http://yandex.ru",
-			wantStatusCode: http.StatusBadRequest,
+			wantStatusCode: http.StatusMethodNotAllowed,
 		},
 		{
 			method:         "CONNECT",
 			path:           "/",
 			body:           "http://yandex.ru",
-			wantStatusCode: http.StatusBadRequest,
+			wantStatusCode: http.StatusMethodNotAllowed,
 		},
 		{
 			method:         "OPTIONS",
 			path:           "/",
 			body:           "http://yandex.ru",
-			wantStatusCode: http.StatusBadRequest,
+			wantStatusCode: http.StatusMethodNotAllowed,
 		},
 		{
 			method:         "TRACE",
 			path:           "/",
 			body:           "http://yandex.ru",
-			wantStatusCode: http.StatusBadRequest,
+			wantStatusCode: http.StatusMethodNotAllowed,
 		},
 	}
 
