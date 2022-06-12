@@ -1,10 +1,11 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 	"net/url"
+
+	"github.com/caarlos0/env/v6"
 
 	"github.com/ikashurnikov/shortener/internal/app/handler"
 	"github.com/ikashurnikov/shortener/internal/app/storage"
@@ -12,24 +13,24 @@ import (
 	"github.com/ikashurnikov/shortener/internal/app/urlshortener"
 )
 
-const (
-	host = "localhost"
-	port = 8080
-)
+type Config struct {
+	SrvAddr string  `env:"SERVER_ADDRESS" envDefault:":8080"`
+	BaseURL url.URL `env:"BASE_URL" envDefault:"http://localhost:8080"`
+}
 
 func main() {
-	baseURL := url.URL{
-		Scheme: "http",
-		Host:   fmt.Sprintf("%v:%v", host, port),
+	var cfg Config
+	if err := env.Parse(&cfg); err != nil {
+		log.Fatal(err)
 	}
 
 	server := http.Server{}
-	server.Addr = fmt.Sprintf(":%d", port)
+	server.Addr = cfg.SrvAddr
 
 	shortener := urlshortener.StdShortener{
 		Storage: storage.NewInMemoryStorage(),
 		Encoder: str2int.NewZBase32Encoder(),
 	}
-	server.Handler = handler.NewHandler(&shortener, baseURL)
+	server.Handler = handler.NewHandler(&shortener, cfg.BaseURL)
 	log.Fatal(server.ListenAndServe())
 }

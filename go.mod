@@ -2,6 +2,7 @@ module github.com/ikashurnikov/shortener
 
 require (
 	github.com/asaskevich/govalidator v0.0.0-20210307081110-f21760c49a8d
+	github.com/caarlos0/env/v6 v6.9.3
 	github.com/corvus-ch/zbase32 v1.0.0
 	github.com/go-chi/chi/v5 v5.0.7
 	github.com/stretchr/testify v1.7.1
