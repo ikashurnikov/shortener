@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 
+	"github.com/asaskevich/govalidator"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
@@ -34,8 +36,23 @@ func NewHandler(urlShortener urlshortener.Shortener, baseURL url.URL) *Handler {
 	handler.Route("/", func(router chi.Router) {
 		router.Post("/", handler.postLongLink)
 		router.Get("/{shortURL}", handler.getShortLink)
+		router.Post("/api/shorten", handler.postAPIShorten)
 	})
 	return handler
+}
+
+func (handler *Handler) shorten(longURL string) (string, error) {
+	shortURL := url.URL{
+		Scheme: handler.baseURL.Scheme,
+		Host:   handler.baseURL.Host,
+	}
+
+	err := urlshortener.ShortenURL(handler.urlShortener, longURL, &shortURL)
+	if err != nil {
+		return "", err
+	}
+
+	return shortURL.String(), err
 }
 
 func (handler *Handler) postLongLink(rw http.ResponseWriter, req *http.Request) {
@@ -45,20 +62,14 @@ func (handler *Handler) postLongLink(rw http.ResponseWriter, req *http.Request) 
 	}
 
 	longURL := string(body)
-	path, err := handler.urlShortener.EncodeLongURL(longURL)
+	shortURL, err := handler.shorten(longURL)
 	if err != nil {
 		http.Error(rw, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	shortURL := url.URL{
-		Scheme: handler.baseURL.Scheme,
-		Host:   handler.baseURL.Host,
-		Path:   path,
-	}
-
 	rw.WriteHeader(http.StatusCreated)
-	rw.Write([]byte(shortURL.String()))
+	rw.Write([]byte(shortURL))
 }
 
 func (handler *Handler) getShortLink(rw http.ResponseWriter, req *http.Request) {
@@ -75,4 +86,42 @@ func (handler *Handler) getShortLink(rw http.ResponseWriter, req *http.Request) 
 	}
 
 	http.Redirect(rw, req, longURL, http.StatusTemporaryRedirect)
+}
+
+func (handler *Handler) postAPIShorten(rw http.ResponseWriter, req *http.Request) {
+	type Request struct {
+		URL string `json:"url" valid:"required"`
+	}
+	type Response struct {
+		Result string `json:"result"`
+	}
+
+	var request Request
+	if err := json.NewDecoder(req.Body).Decode(&request); err != nil {
+		http.Error(rw, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	valid, err := govalidator.ValidateStruct(request)
+	if err != nil || !valid {
+		http.Error(rw, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	shortURL, err := handler.shorten(request.URL)
+	if err != nil {
+		http.Error(rw, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	rw.Header().Set("Content-Type", "application/json; charset=utf-8")
+	rw.WriteHeader(http.StatusCreated)
+
+	enc := json.NewEncoder(rw)
+	enc.SetEscapeHTML(false)
+	err = enc.Encode(Response{Result: shortURL})
+	if err != nil {
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
