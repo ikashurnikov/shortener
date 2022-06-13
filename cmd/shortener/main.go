@@ -3,9 +3,6 @@ package main
 import (
 	"log"
 	"net/http"
-	"net/url"
-
-	"github.com/caarlos0/env/v6"
 
 	"github.com/ikashurnikov/shortener/internal/app/handler"
 	"github.com/ikashurnikov/shortener/internal/app/storage"
@@ -13,15 +10,9 @@ import (
 	"github.com/ikashurnikov/shortener/internal/app/urlshortener"
 )
 
-type config struct {
-	SrvAddr         string  `env:"SERVER_ADDRESS" envDefault:":8080"`
-	BaseURL         url.URL `env:"BASE_URL" envDefault:"http://localhost:8080"`
-	FileStoragePath string  `env:"FILE_STORAGE_PATH"`
-}
-
 func main() {
-	cfg := config{}
-	cfg.parse()
+	cfg := Config{}
+	cfg.Parse()
 
 	repo := newStorage(&cfg)
 	defer repo.Close()
@@ -38,13 +29,7 @@ func main() {
 	log.Fatal(server.ListenAndServe())
 }
 
-func (cfg *config) parse() {
-	if err := env.Parse(cfg); err != nil {
-		log.Fatal(err)
-	}
-}
-
-func newStorage(cfg *config) storage.Storage {
+func newStorage(cfg *Config) storage.Storage {
 	if cfg.FileStoragePath != "" {
 		fileStorage, err := storage.NewFileStorage(cfg.FileStoragePath)
 		if err != nil {
