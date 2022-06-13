@@ -1,17 +1,18 @@
 package handler
 
 import (
+	"compress/flate"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
-
 	"github.com/asaskevich/govalidator"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-
 	"github.com/ikashurnikov/shortener/internal/app/urlshortener"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
 )
 
 type Handler struct {
@@ -27,12 +28,16 @@ func NewHandler(urlShortener urlshortener.Shortener, baseURL url.URL) *Handler {
 	router.Use(middleware.RealIP)
 	router.Use(middleware.Recoverer)
 	router.Use(middleware.Logger)
+	router.Use(decompressor)
+	compressor := middleware.NewCompressor(flate.BestCompression)
+	router.Use(compressor.Handler)
 
 	handler := &Handler{
 		Mux:          router,
 		urlShortener: urlShortener,
 		baseURL:      baseURL,
 	}
+
 	handler.Route("/", func(router chi.Router) {
 		router.Post("/", handler.postLongLink)
 		router.Get("/{shortURL}", handler.getShortLink)
@@ -41,20 +46,7 @@ func NewHandler(urlShortener urlshortener.Shortener, baseURL url.URL) *Handler {
 	return handler
 }
 
-func (handler *Handler) shorten(longURL string) (string, error) {
-	shortURL := url.URL{
-		Scheme: handler.baseURL.Scheme,
-		Host:   handler.baseURL.Host,
-	}
-
-	err := urlshortener.ShortenURL(handler.urlShortener, longURL, &shortURL)
-	if err != nil {
-		return "", err
-	}
-
-	return shortURL.String(), err
-}
-
+// POST /
 func (handler *Handler) postLongLink(rw http.ResponseWriter, req *http.Request) {
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
@@ -72,6 +64,7 @@ func (handler *Handler) postLongLink(rw http.ResponseWriter, req *http.Request) 
 	rw.Write([]byte(shortURL))
 }
 
+// GET /{shortURL}
 func (handler *Handler) getShortLink(rw http.ResponseWriter, req *http.Request) {
 	shortURL := chi.URLParam(req, "shortURL")
 
@@ -88,6 +81,7 @@ func (handler *Handler) getShortLink(rw http.ResponseWriter, req *http.Request) 
 	http.Redirect(rw, req, longURL, http.StatusTemporaryRedirect)
 }
 
+// POST /api/shorten
 func (handler *Handler) postAPIShorten(rw http.ResponseWriter, req *http.Request) {
 	type Request struct {
 		URL string `json:"url" valid:"required"`
@@ -124,4 +118,51 @@ func (handler *Handler) postAPIShorten(rw http.ResponseWriter, req *http.Request
 		http.Error(rw, err.Error(), http.StatusInternalServerError)
 		return
 	}
+}
+
+func (handler *Handler) shorten(longURL string) (string, error) {
+	shortURL := url.URL{
+		Scheme: handler.baseURL.Scheme,
+		Host:   handler.baseURL.Host,
+	}
+
+	err := urlshortener.ShortenURL(handler.urlShortener, longURL, &shortURL)
+	if err != nil {
+		return "", err
+	}
+
+	return shortURL.String(), err
+}
+
+func decompressor(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		var bodyDecompressor io.ReadCloser
+
+		encoding := strings.ToLower(req.Header.Get("Content-Encoding"))
+		switch encoding {
+		case "gzip":
+			gz, err := gzip.NewReader(req.Body)
+			if err != nil {
+				http.Error(rw, err.Error(), http.StatusBadRequest)
+				return
+			}
+			bodyDecompressor = gz
+		case "deflate":
+			bodyDecompressor = flate.NewReader(req.Body)
+		}
+
+		if bodyDecompressor == nil {
+			next.ServeHTTP(rw, req)
+			return
+		}
+
+		srcBody := req.Body
+		req.Body = bodyDecompressor
+		defer func() {
+			req.Body = srcBody
+			bodyDecompressor.Close()
+		}()
+
+		next.ServeHTTP(rw, req)
+	})
 }

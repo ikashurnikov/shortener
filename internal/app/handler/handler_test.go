@@ -293,6 +293,10 @@ func Test_getShortLink(t *testing.T) {
 	}
 }
 
+func Test_decompressor(t *testing.T) {
+
+}
+
 func Test_route(t *testing.T) {
 	tests := []struct {
 		method         string
