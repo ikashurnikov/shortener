@@ -13,24 +13,44 @@ import (
 	"github.com/ikashurnikov/shortener/internal/app/urlshortener"
 )
 
-type Config struct {
-	SrvAddr string  `env:"SERVER_ADDRESS" envDefault:":8080"`
-	BaseURL url.URL `env:"BASE_URL" envDefault:"http://localhost:8080"`
+type config struct {
+	SrvAddr         string  `env:"SERVER_ADDRESS" envDefault:":8080"`
+	BaseURL         url.URL `env:"BASE_URL" envDefault:"http://localhost:8080"`
+	FileStoragePath string  `env:"FILE_STORAGE_PATH"`
 }
 
 func main() {
-	var cfg Config
-	if err := env.Parse(&cfg); err != nil {
-		log.Fatal(err)
+	cfg := config{}
+	cfg.parse()
+
+	repo := newStorage(&cfg)
+	defer repo.Close()
+
+	server := http.Server{
+		Addr: cfg.SrvAddr,
 	}
 
-	server := http.Server{}
-	server.Addr = cfg.SrvAddr
-
 	shortener := urlshortener.StdShortener{
-		Storage: storage.NewInMemoryStorage(),
+		Storage: repo,
 		Encoder: str2int.NewZBase32Encoder(),
 	}
 	server.Handler = handler.NewHandler(&shortener, cfg.BaseURL)
 	log.Fatal(server.ListenAndServe())
+}
+
+func (cfg *config) parse() {
+	if err := env.Parse(cfg); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func newStorage(cfg *config) storage.Storage {
+	if cfg.FileStoragePath != "" {
+		fileStorage, err := storage.NewFileStorage(cfg.FileStoragePath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		return fileStorage
+	}
+	return storage.NewInMemoryStorage()
 }

@@ -13,12 +13,16 @@ type mockStorage struct {
 	str string
 }
 
-func (storage mockStorage) Select(id uint32) (string, error) {
-	return storage.str, storage.err
+func (s mockStorage) Select(id uint32) (string, error) {
+	return s.str, s.err
 }
 
-func (storage mockStorage) Insert(value string) (uint32, error) {
-	return storage.id, storage.err
+func (s mockStorage) Insert(value string) (uint32, error) {
+	return s.id, s.err
+}
+
+func (s mockStorage) Close() error {
+	return nil
 }
 
 type mockEncoder struct {
