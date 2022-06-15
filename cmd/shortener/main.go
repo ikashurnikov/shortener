@@ -11,8 +11,10 @@ import (
 )
 
 func main() {
-	cfg := Config{}
-	cfg.Parse()
+	cfg, err := LoadConfig()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	repo := newStorage(&cfg)
 	defer repo.Close()

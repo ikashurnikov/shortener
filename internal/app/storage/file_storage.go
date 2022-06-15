@@ -16,6 +16,11 @@ type FileStorage struct {
 	guard     sync.Mutex
 }
 
+type record struct {
+	id    uint32
+	value string
+}
+
 func NewFileStorage(filename string) (*FileStorage, error) {
 	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0664)
 	if err != nil {
@@ -28,8 +33,8 @@ func NewFileStorage(filename string) (*FileStorage, error) {
 		currentID: 0,
 	}
 
-	err = storage.scan(func(id uint32, _ string) bool {
-		storage.currentID = id
+	err = storage.scan(func(rec record) bool {
+		storage.currentID = rec.id
 		return false
 	})
 	if err != io.EOF {
@@ -38,7 +43,7 @@ func NewFileStorage(filename string) (*FileStorage, error) {
 	return storage, nil
 }
 
-func (s *FileStorage) scan(handler func(id uint32, value string) bool) error {
+func (s *FileStorage) scan(handler func(rec record) bool) error {
 	_, err := s.file.Seek(0, 0)
 	if err != nil {
 		return err
@@ -51,7 +56,7 @@ func (s *FileStorage) scan(handler func(id uint32, value string) bool) error {
 		if err != nil {
 			return err
 		}
-		if handler(id, value) {
+		if handler(record{id: id, value: value}) {
 			return nil
 		}
 		id++
@@ -63,9 +68,9 @@ func (s *FileStorage) Select(id uint32) (string, error) {
 	defer s.guard.Unlock()
 
 	var value string
-	err := s.scan(func(id_ uint32, value_ string) bool {
-		if id == id_ {
-			value = value_
+	err := s.scan(func(rec record) bool {
+		if id == rec.id {
+			value = rec.value
 			return true
 		}
 		return false
@@ -83,9 +88,9 @@ func (s *FileStorage) Insert(value string) (uint32, error) {
 	defer s.guard.Unlock()
 
 	var id uint32
-	err := s.scan(func(id_ uint32, value_ string) bool {
-		if value == value_ {
-			id = id_
+	err := s.scan(func(rec record) bool {
+		if value == rec.value {
+			id = rec.id
 			return true
 		}
 		return false

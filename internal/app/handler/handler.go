@@ -17,8 +17,8 @@ import (
 
 type Handler struct {
 	*chi.Mux
-	urlShortener urlshortener.Shortener
-	baseURL      url.URL
+	shortener urlshortener.Shortener
+	baseURL   url.URL
 }
 
 func NewHandler(urlShortener urlshortener.Shortener, baseURL url.URL) *Handler {
@@ -33,9 +33,9 @@ func NewHandler(urlShortener urlshortener.Shortener, baseURL url.URL) *Handler {
 	router.Use(compressor.Handler)
 
 	handler := &Handler{
-		Mux:          router,
-		urlShortener: urlShortener,
-		baseURL:      baseURL,
+		Mux:       router,
+		shortener: urlShortener,
+		baseURL:   baseURL,
 	}
 
 	handler.Route("/", func(router chi.Router) {
@@ -68,7 +68,7 @@ func (handler *Handler) postLongLink(rw http.ResponseWriter, req *http.Request) 
 func (handler *Handler) getShortLink(rw http.ResponseWriter, req *http.Request) {
 	shortURL := chi.URLParam(req, "shortURL")
 
-	longURL, err := handler.urlShortener.DecodeShortURL(shortURL)
+	longURL, err := handler.shortener.DecodeShortURL(shortURL)
 	if err != nil {
 		http.Error(
 			rw,
@@ -121,17 +121,18 @@ func (handler *Handler) postAPIShorten(rw http.ResponseWriter, req *http.Request
 }
 
 func (handler *Handler) shorten(longURL string) (string, error) {
-	shortURL := url.URL{
-		Scheme: handler.baseURL.Scheme,
-		Host:   handler.baseURL.Host,
-	}
-
-	err := urlshortener.ShortenURL(handler.urlShortener, longURL, &shortURL)
+	shortPath, err := handler.shortener.EncodeLongURL(longURL)
 	if err != nil {
 		return "", err
 	}
 
-	return shortURL.String(), err
+	shortURL := url.URL{
+		Scheme: handler.baseURL.Scheme,
+		Host:   handler.baseURL.Host,
+		Path:   shortPath,
+	}
+
+	return shortURL.String(), nil
 }
 
 func decompressor(next http.Handler) http.Handler {
@@ -156,10 +157,8 @@ func decompressor(next http.Handler) http.Handler {
 			return
 		}
 
-		srcBody := req.Body
 		req.Body = bodyDecompressor
 		defer func() {
-			req.Body = srcBody
 			bodyDecompressor.Close()
 		}()
 

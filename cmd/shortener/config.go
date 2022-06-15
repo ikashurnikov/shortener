@@ -2,48 +2,35 @@ package main
 
 import (
 	"flag"
-	"log"
 	"net/url"
+	"os"
 
 	"github.com/caarlos0/env/v6"
 )
 
-var (
-	defaultServeAddress string  = ":8080"
-	defaultBaseURL      url.URL = url.URL{Scheme: "http", Host: "localhost:8080"}
-)
-
 type Config struct {
-	SrvAddr         string  `env:"SERVER_ADDRESS"`
-	BaseURL         url.URL `env:"BASE_URL"`
+	SrvAddr         string  `env:"SERVER_ADDRESS" envDefault:":8080"`
+	BaseURL         url.URL `env:"BASE_URL" envDefault:"http://localhost:8080"`
 	FileStoragePath string  `env:"FILE_STORAGE_PATH"`
 }
 
-func (cfg *Config) Parse() {
-	cmdLineCfg := Config{}
-	cmdLineCfg.parseCommandLine()
-
-	cfg.parseEnv()
-
-	if cfg.SrvAddr == "" {
-		cfg.SrvAddr = cmdLineCfg.SrvAddr
+func LoadConfig() (Config, error) {
+	cfg := Config{}
+	if err := cfg.parse(); err != nil {
+		return Config{}, err
 	}
-
-	if cfg.BaseURL.String() == "" {
-		cfg.BaseURL = cmdLineCfg.BaseURL
-	}
-
-	if cfg.FileStoragePath == "" {
-		cfg.FileStoragePath = cmdLineCfg.FileStoragePath
-	}
+	return cfg, nil
 }
 
-func (cfg *Config) parseCommandLine() {
-	flag.StringVar(&cfg.SrvAddr, "a", defaultServeAddress, "server address")
-	flag.StringVar(&cfg.FileStoragePath, "f", "", "file storage path")
+func (cfg *Config) parse() error {
+	if err := env.Parse(cfg); err != nil {
+		return err
+	}
 
-	cfg.BaseURL = defaultBaseURL
-	flag.Func("b", defaultBaseURL.String(), func(flagValue string) error {
+	flag.StringVar(&cfg.SrvAddr, "a", cfg.SrvAddr, "server address")
+	flag.StringVar(&cfg.FileStoragePath, "f", cfg.FileStoragePath, "file storage path")
+
+	flag.Func("b", cfg.BaseURL.String(), func(flagValue string) error {
 		url, err := url.ParseRequestURI(flagValue)
 		if err != nil {
 			return err
@@ -51,11 +38,5 @@ func (cfg *Config) parseCommandLine() {
 		cfg.BaseURL = *url
 		return nil
 	})
-	flag.Parse()
-}
-
-func (cfg *Config) parseEnv() {
-	if err := env.Parse(cfg); err != nil {
-		log.Fatal(err)
-	}
+	return flag.CommandLine.Parse(os.Args[1:])
 }

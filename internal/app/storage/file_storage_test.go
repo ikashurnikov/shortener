@@ -33,29 +33,29 @@ func TestFileStorage_OpenClose(t *testing.T) {
 	defer os.Remove(filename)
 	defer storage.Close()
 
-	insert := func(value string, want_id uint32) {
+	insertValue := func(value string, wantId uint32) {
 		id, err := storage.Insert(value)
 		require.NoError(t, err)
-		require.Equal(t, want_id, id)
+		require.Equal(t, wantId, id)
 	}
 
-	select_ := func(id uint32, want_value string) {
+	selectID := func(id uint32, wantValue string) {
 		value, err := storage.Select(id)
 		require.NoError(t, err)
-		require.Equal(t, want_value, value)
+		require.Equal(t, wantValue, value)
 	}
 
-	insert("one", 1)
-	select_(1, "one")
-	insert("two", 2)
-	select_(2, "two")
-	insert("one", 1)
+	insertValue("one", 1)
+	selectID(1, "one")
+	insertValue("two", 2)
+	selectID(2, "two")
+	insertValue("one", 1)
 	storage.Close()
 
 	storage, err = NewFileStorage(filename)
 	require.NoError(t, err)
-	select_(1, "one")
-	select_(2, "two")
-	insert("two", 2)
-	insert("three", 3)
+	selectID(1, "one")
+	selectID(2, "two")
+	insertValue("two", 2)
+	insertValue("three", 3)
 }
