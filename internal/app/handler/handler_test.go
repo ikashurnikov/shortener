@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/stretchr/testify/assert"
@@ -22,6 +23,7 @@ func (shortener *mockShortener) EncodeLongURL(longURL string) (string, error) {
 	if shortener.error {
 		return "", errors.New("ERROR")
 	}
+	longURL = strings.TrimPrefix(longURL, "https://")
 	return strings.TrimPrefix(longURL, "http://"), nil
 }
 
@@ -66,17 +68,18 @@ func Test_postLongLink(t *testing.T) {
 		{
 			name:           "create short link",
 			target:         "/",
-			body:           "http://yandex.ru",
+			body:           "https://yandex.ru",
 			shortenerError: false,
 			want: want{
 				statusCode: http.StatusCreated,
 				response:   "http://localhost:8080/yandex.ru",
 			},
 		},
+
 		{
 			name:           "invalid target",
 			target:         "/xxx",
-			body:           "http://yandex.ru",
+			body:           "https://yandex.ru",
 			shortenerError: false,
 			want: want{
 				statusCode: http.StatusMethodNotAllowed,
@@ -86,7 +89,7 @@ func Test_postLongLink(t *testing.T) {
 		{
 			name:           "url_shortener failed",
 			target:         "/",
-			body:           "http://yandex.ru",
+			body:           "https://yandex.ru",
 			shortenerError: true,
 			want: want{
 				statusCode: http.StatusBadRequest,
@@ -116,6 +119,104 @@ func Test_postLongLink(t *testing.T) {
 			assert.Equal(t, tt.want.statusCode, resp.StatusCode)
 			if resp.StatusCode == http.StatusCreated {
 				assert.Equal(t, tt.want.response, string(respBody))
+			}
+		})
+	}
+}
+
+func Test_postAPIShorten(t *testing.T) {
+	type want struct {
+		response   string
+		statusCode int
+	}
+	tests := []struct {
+		name           string
+		target         string
+		body           string
+		shortenerError bool
+		want           want
+	}{
+		{
+			name:           "create short link",
+			target:         "/api/shorten",
+			body:           `{"url": "https://yandex.ru"}`,
+			shortenerError: false,
+			want: want{
+				statusCode: http.StatusCreated,
+				response:   "http://localhost:8080/yandex.ru",
+			},
+		},
+
+		{
+			name:           "empty url",
+			target:         "/api/shorten",
+			body:           `{"url": ""}`,
+			shortenerError: false,
+			want: want{
+				statusCode: http.StatusBadRequest,
+			},
+		},
+
+		{
+			name:           "bad json body",
+			target:         "/api/shorten",
+			body:           `{"url": 1}`,
+			shortenerError: false,
+			want: want{
+				statusCode: http.StatusBadRequest,
+			},
+		},
+
+		{
+			name:           "invalid json",
+			target:         "/api/shorten",
+			body:           `{"url": 1`,
+			shortenerError: false,
+			want: want{
+				statusCode: http.StatusBadRequest,
+			},
+		},
+
+		{
+			name:           "url_shortener failed",
+			target:         "/api/shorten",
+			body:           `{"url": "https://yandex.ru"}`,
+			shortenerError: true,
+			want: want{
+				statusCode: http.StatusBadRequest,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			shortener := &mockShortener{error: tt.shortenerError}
+			baseURL := url.URL{
+				Scheme: "http",
+				Host:   "localhost:8080",
+			}
+
+			handler := NewHandler(shortener, baseURL)
+			testServer := httptest.NewServer(handler)
+			defer testServer.Close()
+
+			resp, respBody := testRequest(t, testServer, request{
+				method: "POST",
+				path:   tt.target,
+				body:   tt.body,
+			})
+			defer resp.Body.Close()
+
+			assert.Equal(t, tt.want.statusCode, resp.StatusCode)
+			if resp.StatusCode == http.StatusCreated {
+				type Response struct {
+					Result string `json:"result"`
+				}
+
+				var response Response
+				err := json.Unmarshal([]byte(respBody), &response)
+				require.NoError(t, err)
+				assert.Equal(t, tt.want.response, response.Result)
 			}
 		})
 	}

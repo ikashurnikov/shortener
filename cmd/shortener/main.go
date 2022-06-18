@@ -1,10 +1,8 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 
 	"github.com/ikashurnikov/shortener/internal/app/handler"
 	"github.com/ikashurnikov/shortener/internal/app/storage"
@@ -12,24 +10,34 @@ import (
 	"github.com/ikashurnikov/shortener/internal/app/urlshortener"
 )
 
-const (
-	host = "localhost"
-	port = 8080
-)
-
 func main() {
-	baseURL := url.URL{
-		Scheme: "http",
-		Host:   fmt.Sprintf("%v:%v", host, port),
+	cfg, err := LoadConfig()
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	server := http.Server{}
-	server.Addr = fmt.Sprintf(":%d", port)
+	repo := newStorage(&cfg)
+	defer repo.Close()
+
+	server := http.Server{
+		Addr: cfg.SrvAddr,
+	}
 
 	shortener := urlshortener.StdShortener{
-		Storage: storage.NewInMemoryStorage(),
+		Storage: repo,
 		Encoder: str2int.NewZBase32Encoder(),
 	}
-	server.Handler = handler.NewHandler(&shortener, baseURL)
+	server.Handler = handler.NewHandler(&shortener, cfg.BaseURL)
 	log.Fatal(server.ListenAndServe())
+}
+
+func newStorage(cfg *Config) storage.Storage {
+	if cfg.FileStoragePath != "" {
+		fileStorage, err := storage.NewFileStorage(cfg.FileStoragePath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		return fileStorage
+	}
+	return storage.NewInMemoryStorage()
 }
