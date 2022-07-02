@@ -1,4 +1,4 @@
-package str2int
+package urlencoder
 
 import (
 	"encoding/binary"
@@ -16,14 +16,14 @@ func NewZBase32Encoder() ZBase32Encoder {
 	}
 }
 
-func (encoder ZBase32Encoder) EncodeToString(value uint32) (string, error) {
-	bytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(bytes, value)
-	return encoder.impl.EncodeToString(bytes), nil
+func (encoder ZBase32Encoder) Shorten(id uint32) (string, error) {
+	var bytes [4]byte
+	binary.LittleEndian.PutUint32(bytes[:], uint32(id))
+	return encoder.impl.EncodeToString(bytes[:]), nil
 }
 
-func (encoder ZBase32Encoder) DecodeString(str string) (uint32, error) {
-	bytes, err := zbase32.StdEncoding.DecodeString(str)
+func (encoder ZBase32Encoder) Expand(shortURL string) (uint32, error) {
+	bytes, err := zbase32.StdEncoding.DecodeString(shortURL)
 	if err != nil {
 		return 0, err
 	}

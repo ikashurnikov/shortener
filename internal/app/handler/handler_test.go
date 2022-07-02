@@ -3,8 +3,8 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"github.com/ikashurnikov/shortener/internal/app/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"io/ioutil"
@@ -15,34 +15,64 @@ import (
 	"testing"
 )
 
-type mockShortener struct {
-	error bool
+type mockStorage struct {
+	error  bool
+	userID storage.UserID
+	urls   []storage.URLInfo
 }
 
-func (shortener *mockShortener) EncodeLongURL(longURL string) (string, error) {
-	if shortener.error {
-		return "", errors.New("ERROR")
+func (s *mockStorage) AddLongURL(userID *storage.UserID, longURL string, baseURL url.URL) (string, error) {
+	if s.error {
+		return "", storage.ErrStorage
 	}
+	*userID = s.userID
 	longURL = strings.TrimPrefix(longURL, "https://")
-	return strings.TrimPrefix(longURL, "http://"), nil
+	shortURL := strings.TrimPrefix(longURL, "http://")
+	baseURL.Path = shortURL
+	return baseURL.String(), nil
 }
 
-func (shortener *mockShortener) DecodeShortURL(shortURL string) (string, error) {
-	if shortener.error {
-		return "", errors.New("ERROR")
+func (s *mockStorage) GetLongURL(shortURL string) (string, error) {
+	if s.error {
+		return "", storage.ErrStorage
 	}
 	return fmt.Sprintf("http://%v", shortURL), nil
 }
+
+func (s *mockStorage) GetUserURLs(userID storage.UserID, baseURL url.URL) ([]storage.URLInfo, error) {
+	if s.error {
+		return nil, storage.ErrStorage
+	}
+	if s.userID != userID {
+		return nil, storage.ErrUserNotFound
+	}
+	return s.urls, nil
+}
+
+func (s *mockStorage) Close() error {
+	return nil
+}
+
+const (
+	cipherKey = "test_secret"
+)
 
 type request struct {
 	method string
 	path   string
 	body   string
+
+	userID storage.UserID
 }
 
 func testRequest(t *testing.T, ts *httptest.Server, r request) (*http.Response, string) {
 	req, err := http.NewRequest(r.method, ts.URL+r.path, bytes.NewReader([]byte(r.body)))
 	require.NoError(t, err)
+
+	if r.userID != storage.InvalidUserID {
+		cookie := NewSignedCookie(cipherKey)
+		cookie.AddInt(req, "user_uid", int(r.userID))
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -59,17 +89,17 @@ func Test_postLongLink(t *testing.T) {
 		statusCode int
 	}
 	tests := []struct {
-		name           string
-		target         string
-		body           string
-		shortenerError bool
-		want           want
+		name         string
+		target       string
+		body         string
+		storageError bool
+		want         want
 	}{
 		{
-			name:           "create short link",
-			target:         "/",
-			body:           "https://yandex.ru",
-			shortenerError: false,
+			name:         "create short link",
+			target:       "/",
+			body:         "https://yandex.ru",
+			storageError: false,
 			want: want{
 				statusCode: http.StatusCreated,
 				response:   "http://localhost:8080/yandex.ru",
@@ -77,20 +107,20 @@ func Test_postLongLink(t *testing.T) {
 		},
 
 		{
-			name:           "invalid target",
-			target:         "/xxx",
-			body:           "https://yandex.ru",
-			shortenerError: false,
+			name:         "invalid target",
+			target:       "/xxx",
+			body:         "https://yandex.ru",
+			storageError: false,
 			want: want{
 				statusCode: http.StatusMethodNotAllowed,
 			},
 		},
 
 		{
-			name:           "url_shortener failed",
-			target:         "/",
-			body:           "https://yandex.ru",
-			shortenerError: true,
+			name:         "url_shortener failed",
+			target:       "/",
+			body:         "https://yandex.ru",
+			storageError: true,
 			want: want{
 				statusCode: http.StatusBadRequest,
 			},
@@ -99,13 +129,12 @@ func Test_postLongLink(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			shortener := &mockShortener{error: tt.shortenerError}
 			baseURL := url.URL{
 				Scheme: "http",
 				Host:   "localhost:8080",
 			}
 
-			handler := NewHandler(shortener, baseURL)
+			handler := NewHandler(&mockStorage{error: tt.storageError}, baseURL, "secret")
 			testServer := httptest.NewServer(handler)
 			defer testServer.Close()
 
@@ -113,6 +142,7 @@ func Test_postLongLink(t *testing.T) {
 				method: "POST",
 				path:   tt.target,
 				body:   tt.body,
+				userID: storage.InvalidUserID,
 			})
 			defer resp.Body.Close()
 
@@ -130,17 +160,17 @@ func Test_postAPIShorten(t *testing.T) {
 		statusCode int
 	}
 	tests := []struct {
-		name           string
-		target         string
-		body           string
-		shortenerError bool
-		want           want
+		name         string
+		target       string
+		body         string
+		storageError bool
+		want         want
 	}{
 		{
-			name:           "create short link",
-			target:         "/api/shorten",
-			body:           `{"url": "https://yandex.ru"}`,
-			shortenerError: false,
+			name:         "create short link",
+			target:       "/api/shorten",
+			body:         `{"url": "https://yandex.ru"}`,
+			storageError: false,
 			want: want{
 				statusCode: http.StatusCreated,
 				response:   "http://localhost:8080/yandex.ru",
@@ -148,40 +178,40 @@ func Test_postAPIShorten(t *testing.T) {
 		},
 
 		{
-			name:           "empty url",
-			target:         "/api/shorten",
-			body:           `{"url": ""}`,
-			shortenerError: false,
+			name:         "empty url",
+			target:       "/api/shorten",
+			body:         `{"url": ""}`,
+			storageError: false,
 			want: want{
 				statusCode: http.StatusBadRequest,
 			},
 		},
 
 		{
-			name:           "bad json body",
-			target:         "/api/shorten",
-			body:           `{"url": 1}`,
-			shortenerError: false,
+			name:         "bad json body",
+			target:       "/api/shorten",
+			body:         `{"url": 1}`,
+			storageError: false,
 			want: want{
 				statusCode: http.StatusBadRequest,
 			},
 		},
 
 		{
-			name:           "invalid json",
-			target:         "/api/shorten",
-			body:           `{"url": 1`,
-			shortenerError: false,
+			name:         "invalid json",
+			target:       "/api/shorten",
+			body:         `{"url": 1`,
+			storageError: false,
 			want: want{
 				statusCode: http.StatusBadRequest,
 			},
 		},
 
 		{
-			name:           "url_shortener failed",
-			target:         "/api/shorten",
-			body:           `{"url": "https://yandex.ru"}`,
-			shortenerError: true,
+			name:         "url_shortener failed",
+			target:       "/api/shorten",
+			body:         `{"url": "https://yandex.ru"}`,
+			storageError: true,
 			want: want{
 				statusCode: http.StatusBadRequest,
 			},
@@ -190,13 +220,12 @@ func Test_postAPIShorten(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			shortener := &mockShortener{error: tt.shortenerError}
 			baseURL := url.URL{
 				Scheme: "http",
 				Host:   "localhost:8080",
 			}
 
-			handler := NewHandler(shortener, baseURL)
+			handler := NewHandler(&mockStorage{error: tt.storageError}, baseURL, "secret")
 			testServer := httptest.NewServer(handler)
 			defer testServer.Close()
 
@@ -204,6 +233,7 @@ func Test_postAPIShorten(t *testing.T) {
 				method: "POST",
 				path:   tt.target,
 				body:   tt.body,
+				userID: storage.InvalidUserID,
 			})
 			defer resp.Body.Close()
 
@@ -229,15 +259,15 @@ func Test_getShortLink(t *testing.T) {
 	}
 
 	tests := []struct {
-		name           string
-		path           string
-		shortenerError bool
-		want           want
+		name         string
+		path         string
+		storageError bool
+		want         want
 	}{
 		{
-			name:           "empty path",
-			path:           "/",
-			shortenerError: false,
+			name:         "empty path",
+			path:         "/",
+			storageError: false,
 			want: want{
 				statusCode: http.StatusMethodNotAllowed,
 				location:   "",
@@ -245,9 +275,9 @@ func Test_getShortLink(t *testing.T) {
 		},
 
 		{
-			name:           "unknown short url",
-			path:           "/xxxxxssddf",
-			shortenerError: true,
+			name:         "unknown short url",
+			path:         "/xxxxxssddf",
+			storageError: true,
 			want: want{
 				statusCode: http.StatusBadRequest,
 				location:   "",
@@ -255,9 +285,9 @@ func Test_getShortLink(t *testing.T) {
 		},
 
 		{
-			name:           "redirect",
-			path:           "/yandex.ru",
-			shortenerError: false,
+			name:         "redirect",
+			path:         "/yandex.ru",
+			storageError: false,
 			want: want{
 				statusCode: http.StatusTemporaryRedirect,
 				location:   "http://yandex.ru",
@@ -271,19 +301,19 @@ func Test_getShortLink(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			shortener := &mockShortener{error: tt.shortenerError}
 			baseURL := url.URL{
 				Scheme: "http",
 				Host:   "localhost:8080",
 			}
 
-			handler := NewHandler(shortener, baseURL)
+			handler := NewHandler(&mockStorage{error: tt.storageError}, baseURL, "secret")
 			testServer := httptest.NewServer(handler)
 			defer testServer.Close()
 
 			resp, _ := testRequest(t, testServer, request{
 				method: "GET",
 				path:   tt.path,
+				userID: storage.InvalidUserID,
 			})
 			defer resp.Body.Close()
 
@@ -366,13 +396,12 @@ func Test_route(t *testing.T) {
 	for _, tt := range tests {
 		name := fmt.Sprintf("%s %s", tt.method, tt.path)
 		t.Run(name, func(t *testing.T) {
-			shortener := &mockShortener{}
 			baseURL := url.URL{
 				Scheme: "http",
 				Host:   "localhost:8080",
 			}
 
-			handler := NewHandler(shortener, baseURL)
+			handler := NewHandler(&mockStorage{}, baseURL, "secret")
 			testServer := httptest.NewServer(handler)
 			defer testServer.Close()
 
@@ -380,6 +409,7 @@ func Test_route(t *testing.T) {
 				method: tt.method,
 				path:   tt.path,
 				body:   tt.body,
+				userID: storage.InvalidUserID,
 			})
 			defer resp.Body.Close()
 

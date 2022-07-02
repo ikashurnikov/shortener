@@ -1,121 +1,100 @@
 package storage
 
 import (
-	"io"
+	"errors"
+	"github.com/vmihailenco/msgpack/v5"
+	"net/url"
 	"os"
 	"sync"
-
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 type FileStorage struct {
-	file      *os.File
-	encoder   *msgpack.Encoder
-	decoder   *msgpack.Decoder
-	currentID uint32
-	guard     sync.Mutex
-}
-
-type record struct {
-	id    uint32
-	value string
+	filename string
+	cache    *InMemoryStorage
+	AutoSave bool
+	guard    sync.Mutex
 }
 
 func NewFileStorage(filename string) (*FileStorage, error) {
-	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0664)
-	if err != nil {
-		return nil, err
-	}
 	storage := &FileStorage{
-		file:      file,
-		encoder:   msgpack.NewEncoder(file),
-		decoder:   msgpack.NewDecoder(file),
-		currentID: 0,
+		filename: filename,
+		cache:    NewInMemoryStorage(),
+		AutoSave: true,
 	}
 
-	err = storage.scan(func(rec record) bool {
-		storage.currentID = rec.id
-		return false
-	})
-	if err != io.EOF {
+	if err := storage.load(); err != nil {
 		return nil, err
 	}
 	return storage, nil
 }
 
-func (s *FileStorage) scan(handler func(rec record) bool) error {
-	_, err := s.file.Seek(0, 0)
-	if err != nil {
-		return err
-	}
-	s.decoder.Reset(s.file)
-
-	var id uint32 = 1
-	for {
-		value, err := s.decoder.DecodeString()
-		if err != nil {
-			return err
+func (s *FileStorage) AddLongURL(userID *UserID, longURL string, baseURL url.URL) (string, error) {
+	shortURL, err := s.cache.AddLongURL(userID, longURL, baseURL)
+	if err == nil && s.AutoSave {
+		if err = s.Flush(); err != nil {
+			return "", err
 		}
-		if handler(record{id: id, value: value}) {
+	}
+	return shortURL, err
+}
+
+func (s *FileStorage) GetLongURL(shortURL string) (string, error) {
+	return s.cache.GetLongURL(shortURL)
+}
+
+func (s *FileStorage) GetUserURLs(userID UserID, baseURL url.URL) ([]URLInfo, error) {
+	return s.cache.GetUserURLs(userID, baseURL)
+}
+
+func (s *FileStorage) load() error {
+	stat, err := os.Stat(s.filename)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		id++
+		return ErrStorage
 	}
+	if stat.Size() == 0 {
+		return nil
+	}
+
+	file, err := os.OpenFile(s.filename, os.O_RDONLY, 0664)
+	if err != nil {
+		return ErrStorage
+	}
+
+	dec := msgpack.NewDecoder(file)
+	if err = dec.Decode(s.cache); err != nil {
+		return ErrStorage
+	}
+
+	return nil
 }
 
-func (s *FileStorage) Select(id uint32) (string, error) {
+func (s *FileStorage) Flush() error {
 	s.guard.Lock()
 	defer s.guard.Unlock()
 
-	var value string
-	err := s.scan(func(rec record) bool {
-		if id == rec.id {
-			value = rec.value
-			return true
-		}
-		return false
-	})
-
-	if err == io.EOF {
-		err = ErrNotFound
-	}
-
-	return value, err
-}
-
-func (s *FileStorage) Insert(value string) (uint32, error) {
-	s.guard.Lock()
-	defer s.guard.Unlock()
-
-	var id uint32
-	err := s.scan(func(rec record) bool {
-		if value == rec.value {
-			id = rec.id
-			return true
-		}
-		return false
-	})
-
-	if err == nil {
-		return id, nil
-	} else if err != io.EOF {
-		return 0, ErrNotFound
-	}
-
-	_, err = s.file.Seek(0, 2)
+	file, err := os.OpenFile(s.filename, os.O_WRONLY|os.O_CREATE, 0664)
 	if err != nil {
-		return 0, err
+		return ErrStorage
 	}
 
-	err = s.encoder.EncodeString(value)
-	if err != nil {
-		return 0, err
+	enc := msgpack.NewEncoder(file)
+	if err = enc.Encode(s.cache); err != nil {
+		file.Close()
+		return ErrStorage
 	}
 
-	s.currentID++
-	return s.currentID, nil
+	if err = file.Close(); err != nil {
+		return ErrStorage
+	}
+	return nil
 }
 
 func (s *FileStorage) Close() error {
-	return s.file.Close()
+	if !s.AutoSave {
+		return s.Flush()
+	}
+	return nil
 }

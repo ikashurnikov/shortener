@@ -4,10 +4,8 @@ import (
 	"testing"
 )
 
-func TestInMemoryStorage_Insert(t *testing.T) {
-	testInsert(NewInMemoryStorage(), t)
-}
-
-func TestInMemoryStorage_Select(t *testing.T) {
-	testSelect(NewInMemoryStorage(), t)
+func TestInMemoryStorage(t *testing.T) {
+	testStorage(func() Storage {
+		return NewInMemoryStorage()
+	}, t)
 }

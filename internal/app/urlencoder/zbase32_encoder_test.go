@@ -1,4 +1,4 @@
-package str2int
+package urlencoder
 
 import (
 	"fmt"
@@ -6,10 +6,7 @@ import (
 	"testing"
 )
 
-func TestZBase32_DecodeString(t *testing.T) {
-	type args struct {
-		str string
-	}
+func TestZBase32_Expand(t *testing.T) {
 	tests := []struct {
 		name    string
 		str     string
@@ -50,7 +47,7 @@ func TestZBase32_DecodeString(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			encoder := NewZBase32Encoder()
-			got, err := encoder.DecodeString(tt.str)
+			got, err := encoder.Expand(tt.str)
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -61,7 +58,7 @@ func TestZBase32_DecodeString(t *testing.T) {
 	}
 }
 
-func TestZBase32_EncodeToString(t *testing.T) {
+func TestZBase32_Shorten(t *testing.T) {
 	tests := []struct {
 		value uint32
 		want  string
@@ -79,7 +76,7 @@ func TestZBase32_EncodeToString(t *testing.T) {
 		name := fmt.Sprintf("encodig %v", tt.value)
 		t.Run(name, func(t *testing.T) {
 			encoder := NewZBase32Encoder()
-			got, err := encoder.EncodeToString(tt.value)
+			got, err := encoder.Shorten(tt.value)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})

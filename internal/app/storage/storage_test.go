@@ -1,92 +1,139 @@
 package storage
 
 import (
+	"fmt"
+	"net/url"
+	"reflect"
+	"sort"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-type testInsertFunc = func(storage Storage, t *testing.T)
-type testSelectFunc = func(storage Storage, t *testing.T)
+func testStorage(newStorage func() Storage, t *testing.T) {
+	testAddInvalidLongLink(newStorage(), t)
+	testAddLongLink(newStorage(), t)
+	testGetLongURL(newStorage(), t)
+	testGetUserURLs(newStorage(), t)
+}
 
-var (
-	testInsert testInsertFunc = func(storage Storage, t *testing.T) {
-		defer storage.Close()
+func testAddInvalidLongLink(storage Storage, t *testing.T) {
+	userID := InvalidUserID
+	_, err := storage.AddLongURL(&userID, "", url.URL{})
+	require.Error(t, err)
+	require.Equal(t, InvalidUserID, userID)
 
-		tests := []struct {
-			name  string
-			value string
-			want  uint32
-		}{
-			{
-				name:  "1: insert",
-				value: "value1",
-				want:  1,
-			},
-			{
-				name:  "2: insert",
-				value: "value2",
-				want:  2,
-			},
-			{
-				name:  "1: insert duplicate",
-				value: "value1",
-				want:  1,
-			},
-			{
-				name:  "2: insert duplicate",
-				value: "value2",
-				want:  2,
-			},
-		}
+	_, err = storage.AddLongURL(&userID, "ya", url.URL{})
+	require.Error(t, err)
+	require.Equal(t, InvalidUserID, userID)
+}
 
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				got, err := storage.Insert(tt.value)
-				assert.NoError(t, err)
-				assert.Equal(t, tt.want, got)
-			})
-		}
-	}
+func testAddLongLink(storage Storage, t *testing.T) {
+	defer storage.Close()
 
-	testSelect testSelectFunc = func(storage Storage, t *testing.T) {
-		defer storage.Close()
+	userID := InvalidUserID
 
-		tests := []struct {
-			name    string
-			id      uint32
-			want    string
-			wantErr bool
-		}{
-			{
-				name:    "select existing id",
-				id:      1,
-				want:    "value1",
-				wantErr: false,
-			},
-			{
-				name:    "select unknown id",
-				id:      2,
-				want:    "",
-				wantErr: true,
-			},
-		}
+	shortURL, err := storage.AddLongURL(&userID, "https://yandex.ru", url.URL{})
+	require.NoError(t, err)
+	require.True(t, shortURL != "")
+	require.NotEqual(t, InvalidUserID, userID)
 
-		id, err := storage.Insert("value1")
+	// Добавялем туже самую ссылку
+	shortURL2, err := storage.AddLongURL(&userID, "https://yandex.ru", url.URL{})
+	require.NoError(t, err)
+	require.Equal(t, shortURL, shortURL2)
+	require.NotEqual(t, InvalidUserID, userID)
+
+	// Новая ссыла
+	shortURL3, err := storage.AddLongURL(&userID, "https://google.com", url.URL{})
+	require.NoError(t, err)
+	require.True(t, shortURL3 != "")
+	require.NotEqual(t, shortURL3, shortURL)
+	require.NotEqual(t, InvalidUserID, userID)
+}
+
+func testGetLongURL(storage Storage, t *testing.T) {
+	defer storage.Close()
+
+	_, err := storage.GetLongURL("yyyy")
+	require.Error(t, err)
+
+	userID := InvalidUserID
+
+	for i := 0; i < 10; i++ {
+		longURL := fmt.Sprintf("https://yandex.ru/%d", i)
+		shortURL, err := storage.AddLongURL(&userID, longURL, url.URL{})
 		require.NoError(t, err)
-		require.Equal(t, id, uint32(1))
 
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				got, err := storage.Select(tt.id)
-				if tt.wantErr {
-					assert.Error(t, err)
-				} else {
-					assert.NoError(t, err)
-					assert.Equal(t, tt.want, got)
-				}
-			})
+		longURL2, err := storage.GetLongURL(shortURL)
+		require.NoError(t, err)
+		require.Equal(t, longURL2, longURL)
+	}
+}
+
+func testGetUserURLs(storage Storage, t *testing.T) {
+	defer storage.Close()
+
+	_, err := storage.GetUserURLs(0, url.URL{})
+	require.Error(t, err)
+
+	user1 := newTestUser()
+	user2 := newTestUser()
+
+	user1.addLongURL(storage, "http://share_url.ru", t)
+	user2.addLongURL(storage, "http://share_url.ru", t)
+
+	for i := 0; i < 4; i++ {
+		user1.addLongURL(storage, fmt.Sprintf("https://user_1/%v", i), t)
+		user1.addLongURL(storage, fmt.Sprintf("https://user_2/%v", i), t)
+	}
+
+	urls, err := storage.GetUserURLs(user1.id, url.URL{})
+	require.NoError(t, err)
+	require.True(t, user1.equal(urls))
+
+	urls, err = storage.GetUserURLs(user2.id, url.URL{})
+	require.NoError(t, err)
+	require.True(t, user2.equal(urls))
+}
+
+type testUser struct {
+	id   UserID
+	urls []URLInfo
+}
+
+func newTestUser() testUser {
+	return testUser{
+		id: InvalidUserID,
+	}
+}
+
+func (u *testUser) addLongURL(s Storage, longURL string, t *testing.T) {
+	oldUserID := u.id
+
+	shortURL, err := s.AddLongURL(&u.id, longURL, url.URL{})
+	require.NoError(t, err)
+	require.NotEqual(t, "", shortURL)
+
+	if oldUserID != InvalidUserID {
+		require.Equal(t, oldUserID, u.id)
+	}
+
+	for _, uinfo := range u.urls {
+		if uinfo.LongURL == longURL {
+			return
 		}
 	}
-)
+
+	u.urls = append(u.urls, URLInfo{LongURL: longURL, ShortURL: shortURL})
+}
+
+func (u *testUser) equal(urls []URLInfo) bool {
+	sort.SliceStable(u.urls, func(i, j int) bool {
+		return u.urls[i].LongURL < u.urls[j].LongURL
+	})
+	sort.SliceStable(urls, func(i, j int) bool {
+		return urls[i].LongURL < urls[j].LongURL
+	})
+	return reflect.DeepEqual(urls, u.urls)
+}

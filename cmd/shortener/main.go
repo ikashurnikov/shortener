@@ -6,8 +6,6 @@ import (
 
 	"github.com/ikashurnikov/shortener/internal/app/handler"
 	"github.com/ikashurnikov/shortener/internal/app/storage"
-	"github.com/ikashurnikov/shortener/internal/app/str2int"
-	"github.com/ikashurnikov/shortener/internal/app/urlshortener"
 )
 
 func main() {
@@ -23,11 +21,7 @@ func main() {
 		Addr: cfg.SrvAddr,
 	}
 
-	shortener := urlshortener.StdShortener{
-		Storage: repo,
-		Encoder: str2int.NewZBase32Encoder(),
-	}
-	server.Handler = handler.NewHandler(&shortener, cfg.BaseURL)
+	server.Handler = handler.NewHandler(repo, cfg.BaseURL, "secret")
 	log.Fatal(server.ListenAndServe())
 }
 

@@ -1,61 +1,60 @@
 package storage
 
 import (
+	"fmt"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"net/url"
 	"os"
 	"testing"
-
-	"github.com/google/uuid"
 )
 
-func TestFileStorage_Insert(t *testing.T) {
-	filename := uuid.New().String()
-	storage, err := NewFileStorage(filename)
-	require.NoError(t, err)
-	defer os.Remove(filename)
+func TestFileStorage(t *testing.T) {
+	filenames := make([]string, 0)
+	defer func() {
+		for _, filename := range filenames {
+			os.Remove(filename)
+		}
+	}()
 
-	testInsert(storage, t)
+	testStorage(func() Storage {
+		filename := uuid.New().String()
+		filenames = append(filenames, filename)
+		storage, err := NewFileStorage(filename)
+		require.NoError(t, err)
+		return storage
+	}, t)
 }
 
-func TestFileStorage_Select(t *testing.T) {
+func TestFileStorage_ReadWrite(t *testing.T) {
 	filename := uuid.New().String()
-	storage, err := NewFileStorage(filename)
-	require.NoError(t, err)
 	defer os.Remove(filename)
 
-	testSelect(storage, t)
-}
-
-func TestFileStorage_OpenClose(t *testing.T) {
-	filename := uuid.New().String()
-	storage, err := NewFileStorage(filename)
+	s, err := NewFileStorage(filename)
 	require.NoError(t, err)
-	defer os.Remove(filename)
-	defer storage.Close()
 
-	insertValue := func(value string, wantId uint32) {
-		id, err := storage.Insert(value)
-		require.NoError(t, err)
-		require.Equal(t, wantId, id)
+	user1 := newTestUser()
+	user2 := newTestUser()
+
+	user1.addLongURL(s, "http://share_url.ru", t)
+	user2.addLongURL(s, "http://share_url.ru", t)
+
+	for i := 0; i < 4; i++ {
+		user1.addLongURL(s, fmt.Sprintf("https://user_1/%v", i), t)
+		user1.addLongURL(s, fmt.Sprintf("https://user_2/%v", i), t)
 	}
+	// Закрываем хранилище и скидывем данные на диск.
+	require.NoError(t, s.Close())
 
-	selectID := func(id uint32, wantValue string) {
-		value, err := storage.Select(id)
-		require.NoError(t, err)
-		require.Equal(t, wantValue, value)
-	}
-
-	insertValue("one", 1)
-	selectID(1, "one")
-	insertValue("two", 2)
-	selectID(2, "two")
-	insertValue("one", 1)
-	storage.Close()
-
-	storage, err = NewFileStorage(filename)
+	// Загружаем данные с диска.
+	s, err = NewFileStorage(filename)
 	require.NoError(t, err)
-	selectID(1, "one")
-	selectID(2, "two")
-	insertValue("two", 2)
-	insertValue("three", 3)
+
+	urls, err := s.GetUserURLs(user1.id, url.URL{})
+	require.NoError(t, err)
+	require.True(t, user1.equal(urls))
+
+	urls, err = s.GetUserURLs(user2.id, url.URL{})
+	require.NoError(t, err)
+	require.True(t, user2.equal(urls))
 }
