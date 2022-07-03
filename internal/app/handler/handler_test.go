@@ -53,6 +53,13 @@ func (s *mockStorage) Close() error {
 	return nil
 }
 
+func (s *mockStorage) Ping() error {
+	if s.error {
+		return storage.ErrStorage
+	}
+	return nil
+}
+
 const (
 	cipherKey = "test_secret"
 )
