@@ -26,12 +26,21 @@ func main() {
 }
 
 func newStorage(cfg *Config) storage.Storage {
-	if cfg.FileStoragePath != "" {
+	switch {
+	case cfg.DatabaseDSN != "":
+		db, err := storage.NewDBStorage(cfg.DatabaseDSN)
+		if err != nil {
+			log.Fatal(err)
+		}
+		return db
+
+	case cfg.FileStoragePath != "":
 		fileStorage, err := storage.NewFileStorage(cfg.FileStoragePath)
 		if err != nil {
 			log.Fatal(err)
 		}
 		return fileStorage
 	}
+
 	return storage.NewInMemoryStorage()
 }

@@ -92,6 +92,10 @@ func (s *FileStorage) Flush() error {
 	return nil
 }
 
+func (s *FileStorage) Ping() error {
+	return nil
+}
+
 func (s *FileStorage) Close() error {
 	if !s.AutoSave {
 		return s.Flush()

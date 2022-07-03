@@ -47,6 +47,7 @@ func NewHandler(storage storage.Storage, baseURL url.URL, cipherKey string) *Han
 		router.Post("/api/shorten", handler.postAPIShorten)
 		router.Get("/api/user/urls", handler.getUserURLs)
 		router.Get("/{shortURL}", handler.getShortLink)
+		router.Get("/ping", handler.ping)
 	})
 
 	return handler
@@ -147,6 +148,16 @@ func (h *Handler) getUserURLs(rw http.ResponseWriter, req *http.Request) {
 		http.Error(rw, err.Error(), http.StatusInternalServerError)
 		return
 	}
+}
+
+// GET /ping
+func (h *Handler) ping(rw http.ResponseWriter, req *http.Request) {
+	if err := h.storage.Ping(); err != nil {
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	rw.WriteHeader(http.StatusOK)
 }
 
 // shorten Cократить ссылку.

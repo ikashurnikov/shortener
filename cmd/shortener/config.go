@@ -12,6 +12,7 @@ type Config struct {
 	SrvAddr         string  `env:"SERVER_ADDRESS" envDefault:":8080"`
 	BaseURL         url.URL `env:"BASE_URL" envDefault:"http://localhost:8080"`
 	FileStoragePath string  `env:"FILE_STORAGE_PATH"`
+	DatabaseDSN     string  `env:"DATABASE_DSN"`
 }
 
 func LoadConfig() (Config, error) {
@@ -29,6 +30,7 @@ func (cfg *Config) parse() error {
 
 	flag.StringVar(&cfg.SrvAddr, "a", cfg.SrvAddr, "server address")
 	flag.StringVar(&cfg.FileStoragePath, "f", cfg.FileStoragePath, "file storage path")
+	flag.StringVar(&cfg.DatabaseDSN, "d", cfg.DatabaseDSN, "database dsn")
 
 	flag.Func("b", cfg.BaseURL.String(), func(flagValue string) error {
 		url, err := url.ParseRequestURI(flagValue)

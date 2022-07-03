@@ -39,6 +39,8 @@ type Storage interface {
 	// Если пользователья с userID не существует возвращет ErrUserNotFound
 	GetUserURLs(userID UserID, baseURL url.URL) ([]URLInfo, error)
 
+	Ping() error
+
 	Close() error
 }
 

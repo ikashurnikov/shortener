@@ -100,6 +100,10 @@ func (s *InMemoryStorage) getUserURLs(userID UserID, newURLInfo newURLInfoFunc) 
 	return res, nil
 }
 
+func (s *InMemoryStorage) ping() error {
+	return nil
+}
+
 func (s *InMemoryStorage) close() error {
 	return nil
 }

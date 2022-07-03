@@ -14,6 +14,7 @@ type (
 		insertLongURL(userID *UserID, url string) (uint32, error)
 		selectLongURL(id uint32) (string, error)
 		getUserURLs(id UserID, newURLInfo newURLInfoFunc) ([]URLInfo, error)
+		ping() error
 		close() error
 	}
 
@@ -72,6 +73,10 @@ func (s *baseStorage) GetUserURLs(userID UserID, baseURL url.URL) ([]URLInfo, er
 			uinfo.ShortURL = baseURL.String()
 			return uinfo, nil
 		})
+}
+
+func (s *baseStorage) Ping() error {
+	return s.ping()
 }
 
 func (s *baseStorage) Close() error {

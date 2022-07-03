@@ -6,6 +6,7 @@ require (
 	github.com/corvus-ch/zbase32 v1.0.0
 	github.com/go-chi/chi/v5 v5.0.7
 	github.com/google/uuid v1.3.0
+	github.com/lib/pq v1.10.6
 	github.com/stretchr/testify v1.7.1
 	github.com/vmihailenco/msgpack/v5 v5.3.5
 )
