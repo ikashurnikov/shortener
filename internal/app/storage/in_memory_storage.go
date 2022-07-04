@@ -1,41 +1,37 @@
 package storage
 
 import (
-	"github.com/ikashurnikov/shortener/internal/app/urlencoder"
 	"github.com/vmihailenco/msgpack/v5"
 	"sync"
 )
 
 type (
 	InMemoryStorage struct {
-		store store
+		store linksStore
 		guard sync.RWMutex
-		baseStorage
 	}
 
-	store struct {
-		URLs      urlMap     `msgpack:"urls"`
-		UsersData []userData `msgpack:"usersData"`
+	linksStore struct {
+		Links     linksMap   `msgpack:"links"`
+		UsersData []userData `msgpack:"users_data"`
 	}
 
-	urlMap struct {
-		URLToID map[string]uint32 `msgpack:"urls2id"`
-		IDToURL map[uint32]string `msgpack:"id2urls"`
-		NextID  uint32            `msgpack:"nextId"`
+	linksMap struct {
+		LinkToID   map[string]LinkID `msgpack:"link_to_id"`
+		IDToLink   map[LinkID]string `msgpack:"id_to_link"`
+		NextLinkID LinkID            `msgpack:"nextId"`
 	}
 
 	userData struct {
 		// Список всех ссылок пользователя
-		URLs map[string]uint32 `msgpack:"urls"`
+		Links map[string]LinkID `msgpack:"links"`
 	}
 )
 
 func NewInMemoryStorage() *InMemoryStorage {
-	s := new(InMemoryStorage)
-	s.store = newStore()
-	s.urlEncoder = urlencoder.NewZBase32Encoder()
-	s.baseStorage.storageImpl = s
-	return s
+	return &InMemoryStorage{
+		store: newLinksStore(),
+	}
 }
 
 func (s *InMemoryStorage) MarshalMsgpack() ([]byte, error) {
@@ -46,7 +42,7 @@ func (s *InMemoryStorage) MarshalMsgpack() ([]byte, error) {
 }
 
 func (s *InMemoryStorage) UnmarshalMsgpack(b []byte) error {
-	st := newStore()
+	st := newLinksStore()
 	if err := msgpack.Unmarshal(b, &st); err != nil {
 		return err
 	}
@@ -58,105 +54,137 @@ func (s *InMemoryStorage) UnmarshalMsgpack(b []byte) error {
 	return nil
 }
 
-func (s *InMemoryStorage) insertLongURL(userID *UserID, url string) (uint32, error) {
+func (s *InMemoryStorage) InsertUser() (UserID, error) {
+	s.guard.Lock()
+	defer s.guard.Unlock()
+	return s.store.insertUser(), nil
+}
+
+func (s *InMemoryStorage) InsertLink(userID UserID, link string) (LinkID, error) {
 	s.guard.Lock()
 	defer s.guard.Unlock()
 
-	id := s.store.addURL(userID, url)
-	return id, nil
+	return s.store.insertLink(userID, link)
 }
 
-func (s *InMemoryStorage) selectLongURL(id uint32) (string, error) {
+func (s *InMemoryStorage) InsertLinks(userID UserID, links []string) ([]LinkID, error) {
+	s.guard.Lock()
+	defer s.guard.Unlock()
+
+	return s.store.insertLinks(userID, links)
+}
+
+func (s *InMemoryStorage) SelectLink(id LinkID) (string, error) {
 	s.guard.RLock()
 	defer s.guard.RUnlock()
 
-	url, ok := s.store.findURL(id)
-	if !ok {
-		return "", ErrDecodingShortURL
-	}
-
-	return url, nil
+	return s.store.selectLink(id)
 }
 
-func (s *InMemoryStorage) getUserURLs(userID UserID, newURLInfo newURLInfoFunc) ([]URLInfo, error) {
+func (s *InMemoryStorage) SelectUserLinks(id UserID) (map[string]LinkID, error) {
 	s.guard.RLock()
 	defer s.guard.RUnlock()
 
-	udata := s.store.userData(&userID, false)
-	if udata == nil {
-		return nil, ErrUserNotFound
-	}
-
-	res := make([]URLInfo, 0, len(udata.URLs))
-
-	for url, id := range udata.URLs {
-		urlInfo, err := newURLInfo(id, url)
-		if err != nil {
-			return nil, err
-		}
-		res = append(res, urlInfo)
-	}
-
-	return res, nil
+	return s.store.selectUserLink(id)
 }
 
-func (s *InMemoryStorage) ping() error {
+func (s *InMemoryStorage) Ping() error {
 	return nil
 }
 
-func (s *InMemoryStorage) close() error {
+func (s *InMemoryStorage) Close() error {
 	return nil
 }
 
-func newStore() store {
-	return store{
-		URLs: urlMap{
-			IDToURL: make(map[uint32]string),
-			URLToID: make(map[string]uint32),
-			NextID:  0,
+// linkStore
+
+func newLinksStore() linksStore {
+	return linksStore{
+		Links: linksMap{
+			IDToLink:   make(map[LinkID]string),
+			LinkToID:   make(map[string]LinkID),
+			NextLinkID: 0,
 		},
 	}
 }
 
 func newUserData() userData {
 	return userData{
-		URLs: make(map[string]uint32),
+		Links: make(map[string]LinkID),
 	}
 }
 
-func (s *store) findURL(id uint32) (string, bool) {
-	url, ok := s.URLs.IDToURL[id]
+func (s *linksStore) insertUser() UserID {
+	s.UsersData = append(s.UsersData, newUserData())
+	idx := len(s.UsersData) - 1
+	return UserID(idx)
+}
+
+func (s *linksStore) userData(id UserID) *userData {
+	idx := int(id)
+	if idx >= 0 && idx < len(s.UsersData) {
+		return &s.UsersData[idx]
+	}
+	return nil
+}
+
+func (s *linksStore) insertLink(userID UserID, link string) (LinkID, error) {
+	udata := s.userData(userID)
+	if udata == nil {
+		return 0, ErrUserNotFound
+	}
+
+	id, ok := s.findLinkID(link)
+	if !ok {
+		id = s.Links.NextLinkID
+		s.Links.NextLinkID++
+		s.Links.LinkToID[link] = id
+		s.Links.IDToLink[id] = link
+	}
+
+	udata.Links[link] = id
+	return id, nil
+}
+
+func (s *linksStore) insertLinks(userID UserID, urls []string) ([]LinkID, error) {
+	res := make([]LinkID, len(urls))
+
+	for i, url := range urls {
+		id, err := s.insertLink(userID, url)
+		if err != nil {
+			return nil, err
+		}
+		res[i] = id
+	}
+	return res, nil
+}
+
+func (s *linksStore) selectLink(id LinkID) (string, error) {
+	link, ok := s.findLink(id)
+	if !ok {
+		return "", ErrLinkNotFound
+	}
+	return link, nil
+}
+
+func (s *linksStore) selectUserLink(id UserID) (map[string]LinkID, error) {
+	udata := s.userData(id)
+	if udata == nil {
+		return nil, ErrUserNotFound
+	}
+
+	res := make(map[string]LinkID)
+	for k, v := range udata.Links {
+		res[k] = v
+	}
+	return res, nil
+}
+func (s *linksStore) findLink(id LinkID) (string, bool) {
+	url, ok := s.Links.IDToLink[id]
 	return url, ok
 }
 
-func (s *store) findID(url string) (uint32, bool) {
-	id, ok := s.URLs.URLToID[url]
+func (s *linksStore) findLinkID(link string) (LinkID, bool) {
+	id, ok := s.Links.LinkToID[link]
 	return id, ok
-}
-
-func (s *store) addURL(userID *UserID, url string) uint32 {
-	id, ok := s.findID(url)
-	if !ok {
-		id = s.URLs.NextID
-		s.URLs.NextID++
-		s.URLs.URLToID[url] = id
-		s.URLs.IDToURL[id] = url
-	}
-
-	d := s.userData(userID, true)
-	d.URLs[url] = id
-	return id
-}
-
-func (s *store) userData(id *UserID, add bool) *userData {
-	index := int(*id)
-	if index < 0 || index >= len(s.UsersData) {
-		if !add {
-			return nil
-		}
-		index = len(s.UsersData)
-		*id = UserID(index)
-		s.UsersData = append(s.UsersData, newUserData())
-	}
-	return &s.UsersData[index]
 }

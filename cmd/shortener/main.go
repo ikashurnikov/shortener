@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/ikashurnikov/shortener/internal/app/model"
 	"log"
 	"net/http"
 
@@ -20,8 +21,8 @@ func main() {
 	server := http.Server{
 		Addr: cfg.SrvAddr,
 	}
-
-	server.Handler = handler.NewHandler(repo, cfg.BaseURL, "secret")
+	m := model.New(repo, cfg.BaseURL)
+	server.Handler = handler.NewHandler(m, "secret")
 	log.Fatal(server.ListenAndServe())
 }
 

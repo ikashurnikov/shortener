@@ -3,7 +3,9 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/ikashurnikov/shortener/internal/app/model"
 	"github.com/ikashurnikov/shortener/internal/app/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,47 +17,53 @@ import (
 	"testing"
 )
 
-type mockStorage struct {
-	error  bool
-	userID storage.UserID
-	urls   []storage.URLInfo
+type mockModel struct {
+	error   bool
+	baseURL url.URL
+	userID  model.UserID
 }
 
-func (s *mockStorage) AddLongURL(userID *storage.UserID, longURL string, baseURL url.URL) (string, error) {
-	if s.error {
-		return "", storage.ErrStorage
+func newMockModel(err bool, baseURL url.URL) *mockModel {
+	return &mockModel{
+		error:   err,
+		baseURL: baseURL,
 	}
-	*userID = s.userID
+}
+
+func (m *mockModel) ShortenLink(userID *model.UserID, longURL string) (string, error) {
+	if m.error {
+		return "", errors.New("error")
+	}
+	*userID = m.userID
 	longURL = strings.TrimPrefix(longURL, "https://")
 	shortURL := strings.TrimPrefix(longURL, "http://")
-	baseURL.Path = shortURL
-	return baseURL.String(), nil
+	m.baseURL.Path = shortURL
+	return m.baseURL.String(), nil
 }
 
-func (s *mockStorage) GetLongURL(shortURL string) (string, error) {
-	if s.error {
-		return "", storage.ErrStorage
-	}
-	return fmt.Sprintf("http://%v", shortURL), nil
+func (m *mockModel) ShortenLinks(userID *model.UserID, urls []string) ([]string, error) {
+	return nil, errors.New("not implemented")
 }
 
-func (s *mockStorage) GetUserURLs(userID storage.UserID, baseURL url.URL) ([]storage.URLInfo, error) {
-	if s.error {
-		return nil, storage.ErrStorage
+func (m *mockModel) ExpandLink(shortURL string) (string, error) {
+	if m.error {
+		return "", errors.New("error")
 	}
-	if s.userID != userID {
-		return nil, storage.ErrUserNotFound
-	}
-	return s.urls, nil
+	m.baseURL.Path = shortURL
+	return m.baseURL.String(), nil
 }
 
-func (s *mockStorage) Close() error {
+func (m *mockModel) UserLinks(userID model.UserID) (map[string]string, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockModel) Close() error {
 	return nil
 }
 
-func (s *mockStorage) Ping() error {
-	if s.error {
-		return storage.ErrStorage
+func (m *mockModel) Ping() error {
+	if m.error {
+		return errors.New("error")
 	}
 	return nil
 }
@@ -141,7 +149,8 @@ func Test_postLongLink(t *testing.T) {
 				Host:   "localhost:8080",
 			}
 
-			handler := NewHandler(&mockStorage{error: tt.storageError}, baseURL, "secret")
+			m := newMockModel(tt.storageError, baseURL)
+			handler := NewHandler(m, "secret")
 			testServer := httptest.NewServer(handler)
 			defer testServer.Close()
 
@@ -232,7 +241,8 @@ func Test_postAPIShorten(t *testing.T) {
 				Host:   "localhost:8080",
 			}
 
-			handler := NewHandler(&mockStorage{error: tt.storageError}, baseURL, "secret")
+			m := newMockModel(tt.storageError, baseURL)
+			handler := NewHandler(m, "secret")
 			testServer := httptest.NewServer(handler)
 			defer testServer.Close()
 
@@ -297,7 +307,7 @@ func Test_getShortLink(t *testing.T) {
 			storageError: false,
 			want: want{
 				statusCode: http.StatusTemporaryRedirect,
-				location:   "http://yandex.ru",
+				location:   "http://localhost:8080/yandex.ru",
 			},
 		},
 	}
@@ -313,7 +323,8 @@ func Test_getShortLink(t *testing.T) {
 				Host:   "localhost:8080",
 			}
 
-			handler := NewHandler(&mockStorage{error: tt.storageError}, baseURL, "secret")
+			m := newMockModel(tt.storageError, baseURL)
+			handler := NewHandler(m, "secret")
 			testServer := httptest.NewServer(handler)
 			defer testServer.Close()
 
@@ -408,7 +419,8 @@ func Test_route(t *testing.T) {
 				Host:   "localhost:8080",
 			}
 
-			handler := NewHandler(&mockStorage{}, baseURL, "secret")
+			m := newMockModel(false, baseURL)
+			handler := NewHandler(m, "secret")
 			testServer := httptest.NewServer(handler)
 			defer testServer.Close()
 
