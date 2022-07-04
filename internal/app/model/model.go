@@ -20,5 +20,5 @@ type (
 )
 
 var (
-	ErrInvalidUserID = errors.New("invalid user id")
+	ErrLinkConflict = errors.New("link already exists")
 )

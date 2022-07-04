@@ -25,7 +25,7 @@ func testInsertLink(storage Storage, t *testing.T) {
 
 	// Добавялем туже самую ссылку
 	id2, err := storage.InsertLink(userID, "https://yandex.ru")
-	require.NoError(t, err)
+	require.Error(t, err, ErrLinkAlreadyExists)
 	require.Equal(t, id, id2)
 
 	// Новая ссыла
@@ -94,10 +94,12 @@ func newTestUser(storage Storage, t *testing.T) testUser {
 
 func (u *testUser) addLink(s Storage, link string, t *testing.T) {
 	id, err := s.InsertLink(u.id, link)
-	require.NoError(t, err)
+	if err != nil {
+		require.Error(t, ErrLinkAlreadyExists)
+	}
 	u.links[link] = id
 }
 
 func (u *testUser) equal(links map[string]LinkID) bool {
-	return reflect.DeepEqual(u.links, u.links)
+	return reflect.DeepEqual(u.links, links)
 }

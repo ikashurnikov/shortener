@@ -37,7 +37,8 @@ func (s *DBStorage) InsertUser() (UserID, error) {
 }
 
 func (s *DBStorage) InsertLink(userID UserID, link string) (LinkID, error) {
-	linkIDs, err := s.InsertLinks(userID, []string{link})
+	var alreadyExists bool
+	linkIDs, err := s.insertLinks(userID, []string{link}, &alreadyExists)
 	if err != nil {
 		return 0, err
 	}
@@ -46,17 +47,26 @@ func (s *DBStorage) InsertLink(userID UserID, link string) (LinkID, error) {
 		panic(fmt.Sprintf("Invalid number of linkIDs. Count=%v", len(linkIDs)))
 	}
 
-	return linkIDs[0], nil
+	res := linkIDs[0]
+	if alreadyExists {
+		return res, ErrLinkAlreadyExists
+	}
+
+	return res, nil
 }
 
 func (s *DBStorage) InsertLinks(userID UserID, links []string) ([]LinkID, error) {
+	return s.insertLinks(userID, links, nil)
+}
+
+func (s *DBStorage) insertLinks(userID UserID, links []string, alreadyExists *bool) ([]LinkID, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 
-	linkIDs, err := s.insertLinks(tx, links)
+	linkIDs, err := s.doInsertLinks(tx, links, alreadyExists)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +78,7 @@ func (s *DBStorage) InsertLinks(userID UserID, links []string) ([]LinkID, error)
 	return linkIDs, tx.Commit()
 }
 
-func (s *DBStorage) insertLinks(tx *sql.Tx, links []string) ([]LinkID, error) {
+func (s *DBStorage) doInsertLinks(tx *sql.Tx, links []string, alreadyExists *bool) ([]LinkID, error) {
 	if len(links) == 0 {
 		return nil, nil
 	}
@@ -76,11 +86,11 @@ func (s *DBStorage) insertLinks(tx *sql.Tx, links []string) ([]LinkID, error) {
 	q := `WITH ins AS(
     	INSERT INTO links ("link") VALUES ($1) 
     		ON CONFLICT("link") DO NOTHING
-    	RETURNING link_id
+    	RETURNING link_id, true as is_new
 	)
 	SELECT * FROM ins
 	UNION
-		SELECT link_id FROM links WHERE link=$1;`
+	  SELECT link_id, false as is_new FROM links WHERE link=$1;`
 
 	stmt, err := tx.Prepare(q)
 	if err != nil {
@@ -92,11 +102,19 @@ func (s *DBStorage) insertLinks(tx *sql.Tx, links []string) ([]LinkID, error) {
 		row := stmt.QueryRow(link)
 
 		var id LinkID
-		if err := row.Scan(&id); err != nil {
+		var isNew bool
+
+		if err := row.Scan(&id, &isNew); err != nil {
 			return nil, err
 		}
+
+		if !isNew && alreadyExists != nil {
+			*alreadyExists = true
+		}
+
 		res = append(res, id)
 	}
+
 	return res, nil
 }
 

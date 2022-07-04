@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"github.com/vmihailenco/msgpack/v5"
 	"sync"
 )
@@ -134,16 +135,20 @@ func (s *linksStore) insertLink(userID UserID, link string) (LinkID, error) {
 		return 0, ErrUserNotFound
 	}
 
+	var err error = nil
+
 	id, ok := s.findLinkID(link)
 	if !ok {
 		id = s.Links.NextLinkID
 		s.Links.NextLinkID++
 		s.Links.LinkToID[link] = id
 		s.Links.IDToLink[id] = link
+	} else {
+		err = ErrLinkAlreadyExists
 	}
 
 	udata.Links[link] = id
-	return id, nil
+	return id, err
 }
 
 func (s *linksStore) insertLinks(userID UserID, urls []string) ([]LinkID, error) {
@@ -151,7 +156,7 @@ func (s *linksStore) insertLinks(userID UserID, urls []string) ([]LinkID, error)
 
 	for i, url := range urls {
 		id, err := s.insertLink(userID, url)
-		if err != nil {
+		if err != nil && !errors.Is(err, ErrLinkAlreadyExists) {
 			return nil, err
 		}
 		res[i] = id

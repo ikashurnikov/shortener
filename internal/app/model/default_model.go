@@ -37,14 +37,22 @@ func (m *DefaultModel) ShortenLink(userID *UserID, link string) (string, error) 
 		return "", err
 	}
 
+	var alreadyExists bool
+
 	linkID, err := m.storage.InsertLink(storage.UserID(*userID), normLink)
-	if err != nil {
+	if err != nil && errors.Is(err, storage.ErrLinkAlreadyExists) {
+		alreadyExists = true
+	} else if err != nil {
 		return "", err
 	}
 
 	shortLink, err := m.makeShortURL(linkID)
 	if err != nil {
 		return "", err
+	}
+
+	if alreadyExists {
+		return shortLink, ErrLinkConflict
 	}
 
 	return shortLink, nil

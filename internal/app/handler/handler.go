@@ -9,7 +9,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/ikashurnikov/shortener/internal/app/model"
-	"github.com/ikashurnikov/shortener/internal/app/storage"
 	"io"
 	"net/http"
 	"strings"
@@ -62,12 +61,18 @@ func (h *Handler) postLongLink(rw http.ResponseWriter, req *http.Request) {
 
 	longURL := string(body)
 	shortURL, err := h.shorten(req, rw, longURL)
+
+	status := http.StatusCreated
+
 	if err != nil {
-		http.Error(rw, err.Error(), http.StatusBadRequest)
-		return
+		if !errors.Is(err, model.ErrLinkConflict) {
+			http.Error(rw, err.Error(), http.StatusBadRequest)
+			return
+		}
+		status = http.StatusConflict
 	}
 
-	rw.WriteHeader(http.StatusCreated)
+	rw.WriteHeader(status)
 	rw.Write([]byte(shortURL))
 }
 
@@ -108,14 +113,19 @@ func (h *Handler) postAPIShorten(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	status := http.StatusCreated
+
 	shortLink, err := h.shorten(req, rw, request.URL)
 	if err != nil {
-		http.Error(rw, err.Error(), http.StatusBadRequest)
-		return
+		if !errors.Is(err, model.ErrLinkConflict) {
+			http.Error(rw, err.Error(), http.StatusBadRequest)
+			return
+		}
+		status = http.StatusConflict
 	}
 
 	rw.Header().Set("Content-Type", "application/json; charset=utf-8")
-	rw.WriteHeader(http.StatusCreated)
+	rw.WriteHeader(status)
 
 	enc := json.NewEncoder(rw)
 	enc.SetEscapeHTML(false)
@@ -185,12 +195,12 @@ func (h *Handler) getUserURLs(rw http.ResponseWriter, req *http.Request) {
 	uid := h.getUserID(req)
 	links, err := h.model.UserLinks(uid)
 
-	if err != nil && !errors.Is(err, storage.ErrUserNotFound) {
+	if err != nil {
 		http.Error(rw, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	if len(links) == 0 || (err != nil && errors.Is(err, storage.ErrUserNotFound)) {
+	if len(links) == 0 {
 		rw.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -235,12 +245,12 @@ func (h *Handler) shorten(req *http.Request, rw http.ResponseWriter, longLink st
 	userID := h.getUserID(req)
 
 	shortLink, err := h.model.ShortenLink(&userID, longLink)
-	if err != nil {
+	if err != nil && !errors.Is(err, model.ErrLinkConflict) {
 		return "", err
 	}
 
 	h.setUserID(rw, userID)
-	return shortLink, nil
+	return shortLink, err
 }
 
 func (h *Handler) shortenBatch(req *http.Request, rw http.ResponseWriter, longLinks []string) ([]string, error) {

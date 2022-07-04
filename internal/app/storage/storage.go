@@ -5,8 +5,9 @@ import (
 )
 
 var (
-	ErrUserNotFound = errors.New("user not found")
-	ErrLinkNotFound = errors.New("link not found")
+	ErrUserNotFound      = errors.New("user not found")
+	ErrLinkNotFound      = errors.New("link not found")
+	ErrLinkAlreadyExists = errors.New("link already exists")
 )
 
 const (
@@ -22,6 +23,7 @@ type (
 		InsertUser() (UserID, error)
 
 		//InsertLink  Добавляет ссылку и возвращает ее ID
+		//Если сыылка уже была добавлена, возвращает так же ошибка ErrLinkAlreadyExists
 		InsertLink(userID UserID, link string) (LinkID, error)
 
 		//InsertLinks Добвляет ссылки и возвращает их ID
