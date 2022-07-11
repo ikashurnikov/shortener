@@ -4,108 +4,182 @@ import (
 	"compress/flate"
 	"compress/gzip"
 	"encoding/json"
-	"fmt"
-	"github.com/asaskevich/govalidator"
+	"errors"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/ikashurnikov/shortener/internal/app/urlshortener"
+	"github.com/ikashurnikov/shortener/internal/app/model"
+	"github.com/ikashurnikov/shortener/internal/app/service"
+	"golang.org/x/exp/slices"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 )
 
 type Handler struct {
 	*chi.Mux
-	shortener urlshortener.Shortener
-	baseURL   url.URL
+	shortener service.Shortener
+	CipherKey string
 }
 
-func NewHandler(urlShortener urlshortener.Shortener, baseURL url.URL) *Handler {
+func NewHandler(shortener service.Shortener, cipherKey string) *Handler {
 	router := chi.NewRouter()
+
+	handler := &Handler{
+		Mux:       router,
+		shortener: shortener,
+		CipherKey: cipherKey,
+	}
+
+	compressor := middleware.NewCompressor(flate.BestCompression)
+
 	router.Use(middleware.CleanPath)
 	router.Use(middleware.RequestID)
 	router.Use(middleware.RealIP)
 	router.Use(middleware.Recoverer)
 	router.Use(middleware.Logger)
-	router.Use(decompressor)
-	compressor := middleware.NewCompressor(flate.BestCompression)
+	router.Use(decompressHandler)
 	router.Use(compressor.Handler)
-
-	handler := &Handler{
-		Mux:       router,
-		shortener: urlShortener,
-		baseURL:   baseURL,
-	}
 
 	handler.Route("/", func(router chi.Router) {
 		router.Post("/", handler.postLongLink)
-		router.Get("/{shortURL}", handler.getShortLink)
 		router.Post("/api/shorten", handler.postAPIShorten)
+		router.Post("/api/shorten/batch", handler.postAPIShortenBatch)
+		router.Get("/api/user/urls", handler.getUserURLs)
+		router.Get("/{shortURL}", handler.getShortLink)
+		router.Get("/ping", handler.ping)
 	})
+
 	return handler
 }
 
 // POST /
-func (handler *Handler) postLongLink(rw http.ResponseWriter, req *http.Request) {
+func (h *Handler) postLongLink(rw http.ResponseWriter, req *http.Request) {
 	body, err := io.ReadAll(req.Body)
-	if err != nil {
-		return
-	}
-
-	longURL := string(body)
-	shortURL, err := handler.shorten(longURL)
 	if err != nil {
 		http.Error(rw, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	rw.WriteHeader(http.StatusCreated)
-	rw.Write([]byte(shortURL))
+	originalURL := string(body)
+	link, err := h.shorten(req, rw, originalURL)
+
+	status := http.StatusCreated
+
+	if err != nil {
+		if !errors.Is(err, model.ErrLinkAlreadyExists) {
+			http.Error(rw, err.Error(), http.StatusBadRequest)
+			return
+		}
+		status = http.StatusConflict
+	}
+
+	rw.WriteHeader(status)
+	rw.Write([]byte(link.ShortURL))
 }
 
 // GET /{shortURL}
-func (handler *Handler) getShortLink(rw http.ResponseWriter, req *http.Request) {
+func (h *Handler) getShortLink(rw http.ResponseWriter, req *http.Request) {
 	shortURL := chi.URLParam(req, "shortURL")
+	link, err := h.shortener.GetLinkByShortURL(shortURL)
 
-	longURL, err := handler.shortener.DecodeShortURL(shortURL)
 	if err != nil {
-		http.Error(
-			rw,
-			fmt.Sprintf("Failed to decode URL %v : %v", shortURL, err.Error()),
-			http.StatusBadRequest,
-		)
+		http.Error(rw, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	http.Redirect(rw, req, longURL, http.StatusTemporaryRedirect)
+	http.Redirect(rw, req, link.OriginalURL, http.StatusTemporaryRedirect)
 }
 
 // POST /api/shorten
-func (handler *Handler) postAPIShorten(rw http.ResponseWriter, req *http.Request) {
-	type Request struct {
-		URL string `json:"url" valid:"required"`
-	}
-	type Response struct {
-		Result string `json:"result"`
-	}
+func (h *Handler) postAPIShorten(rw http.ResponseWriter, req *http.Request) {
+	type (
+		Request struct {
+			URL string `json:"url" valid:"required"`
+		}
+
+		Reply struct {
+			Result string `json:"result"`
+		}
+	)
 
 	var request Request
+
 	if err := json.NewDecoder(req.Body).Decode(&request); err != nil {
 		http.Error(rw, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	valid, err := govalidator.ValidateStruct(request)
-	if err != nil || !valid {
+	status := http.StatusCreated
+
+	link, err := h.shorten(req, rw, request.URL)
+	if err != nil {
+		if !errors.Is(err, model.ErrLinkAlreadyExists) {
+			http.Error(rw, err.Error(), http.StatusBadRequest)
+			return
+		}
+		status = http.StatusConflict
+	}
+
+	rw.Header().Set("Content-Type", "application/json; charset=utf-8")
+	rw.WriteHeader(status)
+
+	enc := json.NewEncoder(rw)
+	enc.SetEscapeHTML(false)
+	err = enc.Encode(Reply{Result: link.ShortURL})
+	if err != nil {
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
+// /api/shorten/batch
+func (h *Handler) postAPIShortenBatch(rw http.ResponseWriter, req *http.Request) {
+	type (
+		Request struct {
+			CorrelationID string `json:"correlation_id"`
+			OriginalURL   string `json:"original_url"`
+		}
+
+		Reply struct {
+			CorrelationID string `json:"correlation_id"`
+			ShortURL      string `json:"short_url"`
+		}
+	)
+
+	var request []Request
+	if err := json.NewDecoder(req.Body).Decode(&request); err != nil {
 		http.Error(rw, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	shortURL, err := handler.shorten(request.URL)
+	origURLs := make([]string, len(request))
+	for i, req := range request {
+		origURLs[i] = req.OriginalURL
+	}
+
+	links, err := h.shortenBatch(req, rw, origURLs)
 	if err != nil {
 		http.Error(rw, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	if len(links) != len(origURLs) {
+		http.Error(rw, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	reply := make([]Reply, len(links))
+	for i, link := range links {
+		idx := slices.IndexFunc(request, func(req Request) bool {
+			return link.OriginalURL == req.OriginalURL
+		})
+
+		if idx == -1 {
+			http.Error(rw, "internal error", http.StatusInternalServerError)
+			return
+		}
+		reply[i].CorrelationID = request[idx].CorrelationID
+		reply[i].ShortURL = link.ShortURL
 	}
 
 	rw.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -113,29 +187,74 @@ func (handler *Handler) postAPIShorten(rw http.ResponseWriter, req *http.Request
 
 	enc := json.NewEncoder(rw)
 	enc.SetEscapeHTML(false)
-	err = enc.Encode(Response{Result: shortURL})
+	err = enc.Encode(reply)
 	if err != nil {
 		http.Error(rw, err.Error(), http.StatusInternalServerError)
 		return
 	}
 }
 
-func (handler *Handler) shorten(longURL string) (string, error) {
-	shortPath, err := handler.shortener.EncodeLongURL(longURL)
+// GET /api/user/urls
+func (h *Handler) getUserURLs(rw http.ResponseWriter, req *http.Request) {
+	uid := h.getUserID(req)
+	links, err := h.shortener.GetLinksByUserID(uid)
+
 	if err != nil {
-		return "", err
+		http.Error(rw, err.Error(), http.StatusBadRequest)
+		return
 	}
 
-	shortURL := url.URL{
-		Scheme: handler.baseURL.Scheme,
-		Host:   handler.baseURL.Host,
-		Path:   shortPath,
+	if len(links) == 0 {
+		rw.WriteHeader(http.StatusNoContent)
+		return
 	}
 
-	return shortURL.String(), nil
+	rw.Header().Set("Content-Type", "application/json; charset=utf-8")
+	enc := json.NewEncoder(rw)
+	enc.SetEscapeHTML(false)
+	err = enc.Encode(links)
+	if err != nil {
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
 
-func decompressor(next http.Handler) http.Handler {
+// GET /ping
+func (h *Handler) ping(rw http.ResponseWriter, req *http.Request) {
+	if err := h.shortener.Ping(); err != nil {
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rw.WriteHeader(http.StatusOK)
+}
+
+// shorten Cократить ссылку.
+// Ф-ция так же укстанавлиает cookie "user_id".
+func (h *Handler) shorten(req *http.Request, rw http.ResponseWriter, originalURL string) (model.Link, error) {
+	userID := h.getUserID(req)
+
+	link, err := h.shortener.CreateLink(&userID, originalURL)
+	if err != nil && !errors.Is(err, model.ErrLinkAlreadyExists) {
+		return model.Link{}, err
+	}
+
+	h.setUserID(rw, userID)
+	return link, err
+}
+
+func (h *Handler) shortenBatch(req *http.Request, rw http.ResponseWriter, originalURLs []string) ([]model.Link, error) {
+	userID := h.getUserID(req)
+
+	links, err := h.shortener.CreateLinks(&userID, originalURLs)
+	if err != nil {
+		return nil, err
+	}
+
+	h.setUserID(rw, userID)
+	return links, nil
+}
+
+func decompressHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		var bodyDecompressor io.ReadCloser
 
@@ -164,4 +283,19 @@ func decompressor(next http.Handler) http.Handler {
 
 		next.ServeHTTP(rw, req)
 	})
+}
+
+func (h *Handler) getUserID(req *http.Request) model.UserID {
+	cookie := NewSignedCookie(h.CipherKey)
+	id, ok := cookie.GetInt(req, "user_id")
+	if !ok {
+		return model.InvalidUserID
+	}
+	return model.UserID(id)
+}
+
+func (h *Handler) setUserID(rw http.ResponseWriter, id model.UserID) {
+	if id != model.InvalidUserID {
+		NewSignedCookie(h.CipherKey).SetInt(rw, "user_id", int(id))
+	}
 }
