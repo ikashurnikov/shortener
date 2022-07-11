@@ -1,4 +1,4 @@
-package storage
+package repo
 
 import (
 	"fmt"
@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestFileStorage(t *testing.T) {
+func TestFileRepo(t *testing.T) {
 	filenames := make([]string, 0)
 	defer func() {
 		for _, filename := range filenames {
@@ -16,10 +16,10 @@ func TestFileStorage(t *testing.T) {
 		}
 	}()
 
-	testStorage(func() Storage {
+	testStorage(func() Repo {
 		filename := uuid.New().String()
 		filenames = append(filenames, filename)
-		storage, err := NewFileStorage(filename)
+		storage, err := NewFileRepo(filename)
 		require.NoError(t, err)
 		return storage
 	}, t)
@@ -29,31 +29,29 @@ func TestFileStorage_ReadWrite(t *testing.T) {
 	filename := uuid.New().String()
 	defer os.Remove(filename)
 
-	s, err := NewFileStorage(filename)
+	repo, err := NewFileRepo(filename)
 	require.NoError(t, err)
 
-	user1 := newTestUser(s, t)
-	user2 := newTestUser(s, t)
+	user1 := newTestUser(repo, t)
+	user2 := newTestUser(repo, t)
 
-	user1.addLink(s, "http://share_url.ru", t)
-	user2.addLink(s, "http://share_url.ru", t)
+	user1.saveOriginalURL("http://share_url.ru")
+	user2.saveOriginalURL("http://share_url.ru")
 
 	for i := 0; i < 4; i++ {
-		user1.addLink(s, fmt.Sprintf("https://user_1/%v", i), t)
-		user1.addLink(s, fmt.Sprintf("https://user_2/%v", i), t)
+		user1.saveOriginalURL(fmt.Sprintf("https://user_1/%v", i))
+		user1.saveOriginalURL(fmt.Sprintf("https://user_2/%v", i))
 	}
-	// Закрываем хранилище и скидывем данные на диск.
-	require.NoError(t, s.Close())
 
 	// Загружаем данные с диска.
-	s, err = NewFileStorage(filename)
+	repo, err = NewFileRepo(filename)
 	require.NoError(t, err)
 
-	urls, err := s.SelectUserLinks(user1.id)
+	urls, err := repo.GetOriginalURLsByUserID(user1.id)
 	require.NoError(t, err)
 	require.True(t, user1.equal(urls))
 
-	urls, err = s.SelectUserLinks(user2.id)
+	urls, err = repo.GetOriginalURLsByUserID(user2.id)
 	require.NoError(t, err)
 	require.True(t, user2.equal(urls))
 }

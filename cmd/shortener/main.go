@@ -1,12 +1,12 @@
 package main
 
 import (
-	"github.com/ikashurnikov/shortener/internal/app/model"
+	"github.com/ikashurnikov/shortener/internal/app/repo"
+	"github.com/ikashurnikov/shortener/internal/app/service"
 	"log"
 	"net/http"
 
 	"github.com/ikashurnikov/shortener/internal/app/handler"
-	"github.com/ikashurnikov/shortener/internal/app/storage"
 )
 
 func main() {
@@ -15,33 +15,33 @@ func main() {
 		log.Fatal(err)
 	}
 
-	repo := newStorage(&cfg)
+	repo := newRepo(&cfg)
 	defer repo.Close()
 
 	server := http.Server{
 		Addr: cfg.SrvAddr,
 	}
-	m := model.New(repo, cfg.BaseURL)
+	m := service.NewShortener(repo, cfg.BaseURL)
 	server.Handler = handler.NewHandler(m, "secret")
 	log.Fatal(server.ListenAndServe())
 }
 
-func newStorage(cfg *Config) storage.Storage {
+func newRepo(cfg *Config) repo.Repo {
 	switch {
 	case cfg.DatabaseDSN != "":
-		db, err := storage.NewDBStorage(cfg.DatabaseDSN)
+		db, err := repo.NewDBRepo(cfg.DatabaseDSN)
 		if err != nil {
 			log.Fatal(err)
 		}
 		return db
 
 	case cfg.FileStoragePath != "":
-		fileStorage, err := storage.NewFileStorage(cfg.FileStoragePath)
+		fileStorage, err := repo.NewFileRepo(cfg.FileStoragePath)
 		if err != nil {
 			log.Fatal(err)
 		}
 		return fileStorage
 	}
 
-	return storage.NewInMemoryStorage()
+	return repo.NewInMemoryRepo()
 }

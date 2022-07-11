@@ -1,16 +1,17 @@
-package urlencoder
+package service
 
 import (
 	"fmt"
+	"github.com/ikashurnikov/shortener/internal/app/model"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
-func TestZBase32_Expand(t *testing.T) {
+func TestZBase32LinkIDEncoder_DecodeFromString(t *testing.T) {
 	tests := []struct {
 		name    string
 		str     string
-		want    uint32
+		want    model.LinkID
 		wantErr bool
 	}{
 		{
@@ -46,8 +47,8 @@ func TestZBase32_Expand(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			encoder := NewZBase32Encoder()
-			got, err := encoder.Expand(tt.str)
+			encoder := NewZBase32LinkIDEncoder()
+			got, err := encoder.DecodeFromString(tt.str)
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -58,9 +59,9 @@ func TestZBase32_Expand(t *testing.T) {
 	}
 }
 
-func TestZBase32_Shorten(t *testing.T) {
+func TestZBase32LinkIDEncoder_EncodeToString(t *testing.T) {
 	tests := []struct {
-		value uint32
+		value model.LinkID
 		want  string
 	}{
 		{
@@ -75,8 +76,8 @@ func TestZBase32_Shorten(t *testing.T) {
 	for _, tt := range tests {
 		name := fmt.Sprintf("encodig %v", tt.value)
 		t.Run(name, func(t *testing.T) {
-			encoder := NewZBase32Encoder()
-			got, err := encoder.Shorten(tt.value)
+			encoder := NewZBase32LinkIDEncoder()
+			got, err := encoder.EncodeToString(tt.value)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
