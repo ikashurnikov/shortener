@@ -20,6 +20,8 @@ type Repo interface {
 	// Если пользователя не существует, возвращает пустую карту
 	GetOriginalURLsByUserID(id model.UserID) (map[string]model.LinkID, error)
 
+	DeleteURLs(userID model.UserID, links []model.LinkID) error
+
 	Ping() error
 
 	Close() error
