@@ -20,7 +20,7 @@ func NewDBRepo(dsn string) (*dbRepo, error) {
 	if err != nil {
 		return nil, err
 	}
-	cleanDB(db)
+	//cleanDB(db)
 	if err = initDatabase(db); err != nil {
 		return nil, err
 	}
@@ -126,7 +126,8 @@ func (repo *dbRepo) saveUserLinks(tx *sql.Tx, userID model.UserID, linkIDs []mod
 
 	q := `
 	INSERT INTO user_links("user_id", "link_id") VALUES ($1, $2) 
-	ON CONFLICT("user_id", "link_id") DO NOTHING`
+		ON CONFLICT("user_id", "link_id") 
+	DO UPDATE SET deleted=FALSE WHERE user_links.user_id=$1 AND user_links.link_id=$2`
 
 	stmt, err := tx.Prepare(q)
 	if err != nil {
@@ -144,13 +145,26 @@ func (repo *dbRepo) saveUserLinks(tx *sql.Tx, userID model.UserID, linkIDs []mod
 
 func (repo *dbRepo) GetOriginalURLByID(id model.LinkID) (string, error) {
 	row := repo.db.QueryRow("SELECT original_url FROM links WHERE link_id=$1", id)
+
 	var origURL string
-	if err := row.Scan(&origURL); err != nil {
+	err := row.Scan(&origURL)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", model.ErrLinkNotFound
 		}
 		return "", err
 	}
+
+	row = repo.db.QueryRow("SELECT user_id FROM user_links WHERE link_id=$1 AND deleted=FALSE LIMIT 1", id)
+	var userID int
+	err = row.Scan(&userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return origURL, model.ErrLinkRemoved
+		}
+		return "", err
+	}
+
 	return origURL, nil
 }
 
@@ -158,7 +172,7 @@ func (repo *dbRepo) GetOriginalURLsByUserID(id model.UserID) (map[string]model.L
 	q := `
 	SELECT links.link_id, links.original_url FROM links 
 	  INNER JOIN user_links ON links.link_id = user_links.link_id
-	WHERE user_links.user_id=$1`
+	WHERE user_links.user_id=$1 AND deleted=FALSE`
 
 	rows, err := repo.db.Query(q, id)
 	if err != nil {
@@ -185,6 +199,29 @@ func (repo *dbRepo) GetOriginalURLsByUserID(id model.UserID) (map[string]model.L
 	}
 
 	return res, nil
+}
+
+func (repo *dbRepo) DeleteURLs(userID model.UserID, linkIDs []model.LinkID) error {
+	tx, err := repo.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	q := `UPDATE user_links SET deleted=TRUE WHERE user_id=$1 AND link_id=$2`
+
+	stmt, err := tx.Prepare(q)
+	if err != nil {
+		return err
+	}
+
+	for _, linkID := range linkIDs {
+		if _, err := stmt.Exec(userID, linkID); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 func (repo *dbRepo) Ping() error {
@@ -228,6 +265,7 @@ func initDatabase(db *sql.DB) error {
 	userURLsTable := `CREATE TABLE IF NOT EXISTS user_links(
 		user_id INTEGER NOT NULL,
 		link_id  INTEGER NOT NULL,
+		deleted BOOLEAN NOT NULL DEFAULT FALSE,
 		UNIQUE(user_id, link_id),
 		CONSTRAINT fk_user_id
       		FOREIGN KEY(user_id) REFERENCES users(user_id)

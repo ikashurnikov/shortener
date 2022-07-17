@@ -11,4 +11,5 @@ var (
 	ErrInternalError       = errors.New("internal error")
 	ErrEncodingOriginalURL = errors.New("encoding original url failed")
 	ErrDecodingShortURL    = errors.New("decoding short url failed")
+	ErrLinkRemoved         = errors.New("link has been removed")
 )

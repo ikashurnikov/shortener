@@ -10,6 +10,7 @@ import (
 	"github.com/ikashurnikov/shortener/internal/app/model"
 	"github.com/ikashurnikov/shortener/internal/app/service"
 	"golang.org/x/exp/slices"
+	"golang.org/x/sync/errgroup"
 	"io"
 	"net/http"
 	"strings"
@@ -18,8 +19,13 @@ import (
 type Handler struct {
 	*chi.Mux
 	shortener service.Shortener
+	workers   errgroup.Group
 	CipherKey string
 }
+
+const (
+	workersCount = 10
+)
 
 func NewHandler(shortener service.Shortener, cipherKey string) *Handler {
 	router := chi.NewRouter()
@@ -28,7 +34,9 @@ func NewHandler(shortener service.Shortener, cipherKey string) *Handler {
 		Mux:       router,
 		shortener: shortener,
 		CipherKey: cipherKey,
+		workers:   errgroup.Group{},
 	}
+	handler.workers.SetLimit(workersCount)
 
 	compressor := middleware.NewCompressor(flate.BestCompression)
 
@@ -46,10 +54,15 @@ func NewHandler(shortener service.Shortener, cipherKey string) *Handler {
 		router.Post("/api/shorten/batch", handler.postAPIShortenBatch)
 		router.Get("/api/user/urls", handler.getUserURLs)
 		router.Get("/{shortURL}", handler.getShortLink)
+		router.Delete("/api/user/urls", handler.deleteURLs)
 		router.Get("/ping", handler.ping)
 	})
 
 	return handler
+}
+
+func (h *Handler) Shutdown() {
+	_ = h.workers.Wait()
 }
 
 // POST /
@@ -83,7 +96,11 @@ func (h *Handler) getShortLink(rw http.ResponseWriter, req *http.Request) {
 	link, err := h.shortener.GetLinkByShortURL(shortURL)
 
 	if err != nil {
-		http.Error(rw, err.Error(), http.StatusBadRequest)
+		status := http.StatusBadRequest
+		if errors.Is(err, model.ErrLinkRemoved) {
+			status = http.StatusGone
+		}
+		http.Error(rw, err.Error(), status)
 		return
 	}
 
@@ -219,8 +236,23 @@ func (h *Handler) getUserURLs(rw http.ResponseWriter, req *http.Request) {
 	}
 }
 
+// DELETE /api/user/urls
+func (h *Handler) deleteURLs(rw http.ResponseWriter, req *http.Request) {
+	var shortURLs []string
+	if err := json.NewDecoder(req.Body).Decode(&shortURLs); err != nil {
+		http.Error(rw, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	userID := h.getUserID(req)
+	h.workers.Go(func() error {
+		return h.shortener.DeleteShortURLs(userID, shortURLs)
+	})
+	rw.WriteHeader(http.StatusAccepted)
+}
+
 // GET /ping
-func (h *Handler) ping(rw http.ResponseWriter, req *http.Request) {
+func (h *Handler) ping(rw http.ResponseWriter, _ *http.Request) {
 	if err := h.shortener.Ping(); err != nil {
 		http.Error(rw, err.Error(), http.StatusInternalServerError)
 		return
@@ -278,7 +310,7 @@ func decompressHandler(next http.Handler) http.Handler {
 
 		req.Body = bodyDecompressor
 		defer func() {
-			bodyDecompressor.Close()
+			_ = bodyDecompressor.Close()
 		}()
 
 		next.ServeHTTP(rw, req)

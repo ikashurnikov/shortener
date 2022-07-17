@@ -11,9 +11,11 @@ import (
 )
 
 type (
+	linkDeleted bool
+
 	item struct {
-		OriginalURL string         `json:"original_uRL"`
-		Users       []model.UserID `json:"users"`
+		OriginalURL string                       `json:"original_uRL"`
+		Users       map[model.UserID]linkDeleted `json:"users"`
 	}
 
 	inMemoryRepo struct {
@@ -80,7 +82,14 @@ func (repo *inMemoryRepo) GetOriginalURLByID(id model.LinkID) (string, error) {
 		return "", model.ErrLinkNotFound
 	}
 
-	return repo.Items[id].OriginalURL, nil
+	it := repo.Items[id]
+	for _, deleted := range it.Users {
+		if !deleted {
+			return it.OriginalURL, nil
+		}
+	}
+
+	return it.OriginalURL, model.ErrLinkRemoved
 }
 
 func (repo *inMemoryRepo) GetOriginalURLsByUserID(userID model.UserID) (map[string]model.LinkID, error) {
@@ -93,11 +102,33 @@ func (repo *inMemoryRepo) GetOriginalURLsByUserID(userID model.UserID) (map[stri
 
 	res := make(map[string]model.LinkID)
 	for idx, it := range repo.Items {
-		if slices.Contains(it.Users, userID) {
+		deleted, ok := it.Users[userID]
+		if ok && !bool(deleted) {
 			res[it.OriginalURL] = model.LinkID(idx)
 		}
 	}
 	return res, nil
+}
+
+func (repo *inMemoryRepo) DeleteURLs(userID model.UserID, links []model.LinkID) error {
+	repo.guard.Lock()
+	defer repo.guard.Unlock()
+
+	if !repo.IsValidUserID(userID) {
+		return model.ErrUserNotFound
+	}
+
+	for _, linkID := range links {
+		if int(linkID) >= len(repo.Items) {
+			continue
+		}
+		it := repo.Items[linkID]
+		_, ok := it.Users[userID]
+		if ok {
+			it.Users[userID] = true
+		}
+	}
+	return nil
 }
 
 func (repo *inMemoryRepo) IsValidUserID(id model.UserID) bool {
@@ -113,16 +144,14 @@ func (repo *inMemoryRepo) saveOriginalURL(userID model.UserID, originalURL strin
 
 	idx := slices.IndexFunc(repo.Items, func(i *item) bool { return i.OriginalURL == originalURL })
 	if idx == -1 {
-		repo.Items = append(repo.Items, &item{OriginalURL: originalURL})
+		repo.addItem(originalURL)
 		idx = len(repo.Items) - 1
 	} else {
 		err = model.ErrLinkAlreadyExists
 	}
 
 	it := repo.Items[idx]
-	if !slices.Contains(it.Users, userID) {
-		it.Users = append(it.Users, userID)
-	}
+	it.Users[userID] = false
 	return model.LinkID(idx), err
 }
 
@@ -132,4 +161,12 @@ func (repo *inMemoryRepo) Ping() error {
 
 func (repo *inMemoryRepo) Close() error {
 	return nil
+}
+
+func (repo *inMemoryRepo) addItem(url string) {
+	i := &item{
+		OriginalURL: url,
+		Users:       make(map[model.UserID]linkDeleted),
+	}
+	repo.Items = append(repo.Items, i)
 }

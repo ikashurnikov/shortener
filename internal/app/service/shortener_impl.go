@@ -115,6 +115,23 @@ func (s *shortener) GetLinksByUserID(userID model.UserID) ([]model.Link, error) 
 	return res, err
 }
 
+func (s *shortener) DeleteShortURLs(userID model.UserID, shortURls []string) error {
+	if !userID.IsValid() {
+		return model.ErrUserNotFound
+	}
+
+	linkIDs := make([]model.LinkID, len(shortURls))
+	for i, shortURL := range shortURls {
+		linkID, err := s.linkIDEncoder.DecodeFromString(shortURL)
+		if err != nil {
+			return err
+		}
+		linkIDs[i] = linkID
+	}
+
+	return s.repo.DeleteURLs(userID, linkIDs)
+}
+
 func (s *shortener) Ping() error {
 	return s.repo.Ping()
 }

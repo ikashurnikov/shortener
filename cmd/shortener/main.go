@@ -22,7 +22,11 @@ func main() {
 		Addr: cfg.SrvAddr,
 	}
 	m := service.NewShortener(repo, cfg.BaseURL)
-	server.Handler = handler.NewHandler(m, "secret")
+
+	h := handler.NewHandler(m, "secret")
+	defer h.Shutdown()
+
+	server.Handler = h
 	log.Fatal(server.ListenAndServe())
 }
 

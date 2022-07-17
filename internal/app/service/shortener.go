@@ -7,6 +7,7 @@ type Shortener interface {
 	CreateLinks(userID *model.UserID, originalURLs []string) ([]model.Link, error)
 	GetLinkByShortURL(shortURL string) (model.Link, error)
 	GetLinksByUserID(id model.UserID) ([]model.Link, error)
+	DeleteShortURLs(id model.UserID, shortURls []string) error
 	Ping() error
 }
 
