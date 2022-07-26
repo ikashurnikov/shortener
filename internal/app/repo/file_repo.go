@@ -58,6 +58,14 @@ func (repo *fileRepo) GetOriginalURLsByUserID(id model.UserID) (map[string]model
 	return repo.cache.GetOriginalURLsByUserID(id)
 }
 
+func (repo *fileRepo) DeleteURLs(userID model.UserID, links []model.LinkID) error {
+	err := repo.cache.DeleteURLs(userID, links)
+	if err != nil {
+		err = repo.save()
+	}
+	return err
+}
+
 func (repo *fileRepo) Ping() error {
 	return nil
 }

@@ -8,6 +8,7 @@ require (
 	github.com/lib/pq v1.10.6
 	github.com/stretchr/testify v1.7.1
 	golang.org/x/exp v0.0.0-20220706164943-b4a6d9510983
+	golang.org/x/sync v0.0.0-20220601150217-0de741cfad7f
 )
 
 require (
